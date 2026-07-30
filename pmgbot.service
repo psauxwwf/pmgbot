@@ -1,0 +1,16 @@
+[Unit]
+Description=PMG deleted spam blacklist daemon
+Documentation=man:systemd.service(5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pmgbot
+ExecStartPre=/usr/bin/test -f /opt/pmgbot/pmgbot.yaml
+ExecStart=/opt/pmgbot/pmgbot daemon --config /opt/pmgbot/pmgbot.yaml
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

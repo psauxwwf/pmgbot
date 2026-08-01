@@ -18,6 +18,7 @@ type ParserConfig struct {
 
 type ImporterConfig struct {
 	Blacklist string
+	Exclude   string
 	WhoName   string
 	Timeout   time.Duration
 }
@@ -25,6 +26,7 @@ type ImporterConfig struct {
 type DaemonConfig struct {
 	Before          time.Duration
 	Every           time.Duration
+	Exclude         string
 	ParseTimeout    time.Duration
 	ImporterWhoName string
 	ImportTimeout   time.Duration
@@ -35,6 +37,7 @@ type FileConfig struct {
 	LogPath   string           `yaml:"log_path"`
 	Sudo      bool             `yaml:"sudo"`
 	Blacklist string           `yaml:"blacklist"`
+	Exclude   string           `yaml:"exclude"`
 	Daemon    FileDaemonConfig `yaml:"daemon"`
 }
 
@@ -136,6 +139,7 @@ func (config FileConfig) DaemonConfig() DaemonConfig {
 	return DaemonConfig{
 		Before:          time.Duration(config.Daemon.Before),
 		Every:           time.Duration(config.Daemon.Every),
+		Exclude:         config.Exclude,
 		ParseTimeout:    time.Duration(config.Daemon.ParseTimeout),
 		ImporterWhoName: config.Daemon.ImporterWhoName,
 		ImportTimeout:   time.Duration(config.Daemon.ImportTimeout),

@@ -22,12 +22,14 @@ const (
 	defaultBefore          = 30 * time.Minute
 	defaultDaemonEvery     = 15 * time.Minute
 	defaultConfigPath      = "pmgbot.yaml"
+	defaultExclude         = "exclude.txt"
 	defaultLogLevel        = "info"
 )
 
 type cliConfig struct {
 	Blacklist  string
 	ConfigPath string
+	Exclude    string
 	LogPath    string
 	LogLevel   string
 	Sudo       bool
@@ -73,6 +75,12 @@ func rootCmd() *cobra.Command {
 		"config",
 		defaultConfigPath,
 		"path to yaml config for daemon and --save-config",
+	)
+	root.PersistentFlags().StringVar(
+		&config.Exclude,
+		"exclude",
+		defaultExclude,
+		"path for senders to skip during import",
 	)
 	root.PersistentFlags().StringVar(
 		&config.LogPath,
@@ -171,6 +179,7 @@ func importCmd(logConfig *cliConfig) *cobra.Command {
 			}
 
 			config.Blacklist = logConfig.Blacklist
+			config.Exclude = logConfig.Exclude
 			pmgcmd.SetSudo(logConfig.Sudo)
 
 			if err := configureLogger(logConfig.LogLevel, logConfig.LogPath); err != nil {
@@ -243,6 +252,7 @@ func defaultFileConfig(_ time.Time) pmgbot.FileConfig {
 		LogPath:   "",
 		Sudo:      true,
 		Blacklist: "blacklist.txt",
+		Exclude:   defaultExclude,
 		Daemon: pmgbot.FileDaemonConfig{
 			Before:          pmgbot.Duration(defaultBefore),
 			Every:           pmgbot.Duration(defaultDaemonEvery),

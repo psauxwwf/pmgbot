@@ -101,6 +101,14 @@ func sinceFromBefore(now time.Time, before time.Duration) string {
 }
 
 func existingBlacklistSenders(path string) ([]string, error) {
+	return readEmailList(path)
+}
+
+func readEmailList(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+
 	exists, err := fs.ExistsFile(path)
 	if err != nil {
 		return nil, err
@@ -124,7 +132,7 @@ func existingBlacklistSenders(path string) ([]string, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read existing blacklist %s: %w", path, err)
+		return nil, fmt.Errorf("read email list %s: %w", path, err)
 	}
 
 	return senders, nil

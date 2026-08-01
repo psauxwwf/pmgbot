@@ -90,6 +90,16 @@ func TestExistingBlacklistSenders(t *testing.T) {
 	}
 }
 
+func TestReadEmailListReturnsEmptyForMissingFile(t *testing.T) {
+	got, err := readEmailList(filepath.Join(t.TempDir(), "missing.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %#v, want empty list", got)
+	}
+}
+
 func TestAppendUniqueSenders(t *testing.T) {
 	got := appendUniqueSenders(
 		[]string{`old@example.com`, `keep@example.com`},

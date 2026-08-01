@@ -51,7 +51,7 @@ func TestRootCommandsAndFlags(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"blacklist", "log-level", "log-path", "sudo"} {
+	for _, name := range []string{"blacklist", "exclude", "log-level", "log-path", "sudo"} {
 		if root.PersistentFlags().Lookup(name) == nil {
 			t.Fatalf("common flag %q not found", name)
 		}
@@ -102,6 +102,18 @@ func TestBlacklistDefault(t *testing.T) {
 	}
 	if flag.DefValue != "blacklist.txt" {
 		t.Fatalf("got %q, want %q", flag.DefValue, "blacklist.txt")
+	}
+}
+
+func TestExcludeDefault(t *testing.T) {
+	root := rootCmd()
+
+	flag := root.PersistentFlags().Lookup("exclude")
+	if flag == nil {
+		t.Fatal("common flag \"exclude\" not found")
+	}
+	if flag.DefValue != defaultExclude {
+		t.Fatalf("got %q, want %q", flag.DefValue, defaultExclude)
 	}
 }
 
@@ -157,6 +169,9 @@ func TestConfigDefault(t *testing.T) {
 	}
 	if !config.Sudo {
 		t.Fatal("default config sudo must be enabled")
+	}
+	if config.Exclude != defaultExclude {
+		t.Fatalf("got exclude %q, want %q", config.Exclude, defaultExclude)
 	}
 	if time.Duration(config.Daemon.Before) != defaultBefore {
 		t.Fatalf("got daemon before %s, want %s", time.Duration(config.Daemon.Before), defaultBefore)

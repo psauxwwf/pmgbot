@@ -66,8 +66,19 @@ func ImportEmailsContext(ctx context.Context, emails []string, config ImporterCo
 	if name == "" {
 		return 0, fmt.Errorf("PMG who name is required")
 	}
+	excludedEmails, err := readEmailList(config.Exclude)
+	if err != nil {
+		return 0, err
+	}
+	emails = excludeEmails(emails, excludedEmails)
 
-	slog.Info("starting PMG who email import", "who_name", name, "count", len(emails), "import_timeout", config.Timeout.String())
+	slog.Info("starting PMG who email import",
+		"who_name", name,
+		"count", len(emails),
+		"exclude", config.Exclude,
+		"excluded_count", len(excludedEmails),
+		"import_timeout", config.Timeout.String(),
+	)
 
 	id, err := pmgWhoIDContext(ctx, name)
 	if err != nil {
@@ -90,6 +101,30 @@ func ImportEmailsContext(ctx context.Context, emails []string, config ImporterCo
 	}
 
 	return id, nil
+}
+
+func excludeEmails(emails []string, excluded []string) []string {
+	var normalizedExcluded []string
+	for _, email := range excluded {
+		email = strings.ToLower(strings.TrimSpace(email))
+		if email != "" && !slices.Contains(normalizedExcluded, email) {
+			normalizedExcluded = append(normalizedExcluded, email)
+		}
+	}
+
+	var included []string
+	for _, email := range emails {
+		email = strings.ToLower(strings.TrimSpace(email))
+		if email == "" {
+			continue
+		}
+		if slices.Contains(normalizedExcluded, email) || slices.Contains(included, email) {
+			continue
+		}
+		included = append(included, email)
+	}
+
+	return included
 }
 
 func pmgWhoID(name string, timeout time.Duration) (int, error) {

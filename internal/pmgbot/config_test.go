@@ -15,6 +15,7 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		LogPath:   "pmgbot.log",
 		Sudo:      true,
 		Blacklist: "blacklist.txt",
+		Exclude:   "exclude.txt",
 		Daemon: FileDaemonConfig{
 			Before:          Duration(30 * time.Minute),
 			Every:           Duration(15 * time.Minute),
@@ -44,6 +45,9 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	if time.Duration(loaded.Daemon.ImportTimeout) != 2*time.Minute {
 		t.Fatalf("got import timeout %s, want 2m", time.Duration(loaded.Daemon.ImportTimeout))
 	}
+	if loaded.DaemonConfig().Exclude != "exclude.txt" {
+		t.Fatalf("got daemon exclude %q, want exclude.txt", loaded.DaemonConfig().Exclude)
+	}
 }
 
 func TestDurationUnmarshalError(t *testing.T) {
@@ -53,6 +57,7 @@ func TestDurationUnmarshalError(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`blacklist: blacklist.txt`,
+		`exclude: exclude.txt`,
 		`daemon:`,
 		`  before: 30m`,
 		`  every: 15m`,
@@ -87,6 +92,7 @@ func TestDurationUnmarshalUsesMinutesForBareNumber(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`blacklist: blacklist.txt`,
+		`exclude: exclude.txt`,
 		`daemon:`,
 		`  before: 30`,
 		`  every: 15m`,

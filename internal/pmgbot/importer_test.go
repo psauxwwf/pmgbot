@@ -136,3 +136,19 @@ func TestMissingPMGWhoEmails(t *testing.T) {
 		}
 	}
 }
+
+func TestExcludeEmails(t *testing.T) {
+	got := excludeEmails(
+		[]string{"a@example.com", "B@example.com", " c@example.com ", "a@example.com", ""},
+		[]string{"b@example.com", "C@example.com", " c@example.com "},
+	)
+	want := []string{"a@example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	}
+}

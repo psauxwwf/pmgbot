@@ -75,6 +75,7 @@ func runDaemonOnce(ctx context.Context, config DaemonConfig) error {
 
 	importCtx, cancel := context.WithTimeout(ctx, config.ImportTimeout)
 	id, err := ImportEmailsContext(importCtx, senders, ImporterConfig{
+		Exclude: config.Exclude,
 		WhoName: strings.TrimSpace(config.ImporterWhoName),
 		Timeout: config.ImportTimeout,
 	})

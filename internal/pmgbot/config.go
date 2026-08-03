@@ -10,45 +10,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type ParserConfig struct {
-	Before    time.Duration
-	Blacklist string
-	Exclude   string
-	Timeout   time.Duration
-}
-
-type ImporterConfig struct {
-	Blacklist string
-	Exclude   string
-	WhoName   string
-	Timeout   time.Duration
-}
-
 type DaemonConfig struct {
-	Before          time.Duration
-	Every           time.Duration
-	Exclude         string
-	ParseTimeout    time.Duration
-	ImporterWhoName string
-	ImportTimeout   time.Duration
+	Every   time.Duration
+	Timeout time.Duration
+	Deliver FieldPatterns
+	Delete  FieldPatterns
 }
 
 type FileConfig struct {
-	LogLevel  string           `yaml:"log_level"`
-	LogPath   string           `yaml:"log_path"`
-	Sudo      bool             `yaml:"sudo"`
-	Blacklist string           `yaml:"blacklist"`
-	Exclude   string           `yaml:"exclude"`
-	Daemon    FileDaemonConfig `yaml:"daemon"`
+	LogLevel string           `yaml:"log_level"`
+	LogPath  string           `yaml:"log_path"`
+	Sudo     bool             `yaml:"sudo"`
+	Daemon   FileDaemonConfig `yaml:"daemon"`
+	Deliver  FieldPatterns    `yaml:"deliver"`
+	Delete   FieldPatterns    `yaml:"delete"`
 }
 
 type FileDaemonConfig struct {
-	Before          Duration `yaml:"before"`
-	Every           Duration `yaml:"every"`
-	ParseTimeout    Duration `yaml:"parse_timeout"`
-	ImporterWhoName string   `yaml:"importer_who_name"`
-	ImportTimeout   Duration `yaml:"import_timeout"`
+	Every   Duration `yaml:"every"`
+	Timeout Duration `yaml:"timeout"`
 }
+
+type FieldPatterns map[string][]string
 
 type Duration time.Duration
 
@@ -138,11 +121,9 @@ func SaveFileConfig(path string, config FileConfig) error {
 
 func (config FileConfig) DaemonConfig() DaemonConfig {
 	return DaemonConfig{
-		Before:          time.Duration(config.Daemon.Before),
-		Every:           time.Duration(config.Daemon.Every),
-		Exclude:         config.Exclude,
-		ParseTimeout:    time.Duration(config.Daemon.ParseTimeout),
-		ImporterWhoName: config.Daemon.ImporterWhoName,
-		ImportTimeout:   time.Duration(config.Daemon.ImportTimeout),
+		Every:   time.Duration(config.Daemon.Every),
+		Timeout: time.Duration(config.Daemon.Timeout),
+		Deliver: config.Deliver,
+		Delete:  config.Delete,
 	}
 }

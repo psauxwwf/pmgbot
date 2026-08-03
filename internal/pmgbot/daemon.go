@@ -2,40 +2,50 @@ package pmgbot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 )
 
-func Daemon(ctx context.Context, config DaemonConfig) error {
-	if config.Before <= 0 {
-		return fmt.Errorf("daemon before must be greater than zero")
+var (
+	quarantineSpamContext        = pmgQuarantineSpamContext
+	applyQuarantineActionContext = pmgApplyQuarantineActionContext
+)
+
+func RunOnce(ctx context.Context, config DaemonConfig) error {
+	if config.Timeout <= 0 {
+		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
+	deliverPatterns, deletePatterns, err := compileDaemonPatterns(config)
+	if err != nil {
+		return err
+	}
+
+	return runDaemonOnce(ctx, config, deliverPatterns, deletePatterns)
+}
+
+func Daemon(ctx context.Context, config DaemonConfig) error {
 	if config.Every <= 0 {
 		return fmt.Errorf("daemon every must be greater than zero")
 	}
-	if config.ParseTimeout <= 0 {
-		return fmt.Errorf("daemon parse timeout must be greater than zero")
+	if config.Timeout <= 0 {
+		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
-	if config.ImportTimeout <= 0 {
-		return fmt.Errorf("daemon import timeout must be greater than zero")
-	}
-	name := strings.TrimSpace(config.ImporterWhoName)
-	if name == "" {
-		return fmt.Errorf("daemon importer who name is required")
+	deliverPatterns, deletePatterns, err := compileDaemonPatterns(config)
+	if err != nil {
+		return err
 	}
 
 	slog.Info("starting pmgbot daemon",
-		"before", config.Before.String(),
 		"every", config.Every.String(),
-		"parse_timeout", config.ParseTimeout.String(),
-		"importer_who_name", name,
-		"import_timeout", config.ImportTimeout.String(),
+		"timeout", config.Timeout.String(),
+		"deliver_fields", len(deliverPatterns),
+		"delete_fields", len(deletePatterns),
 	)
 
 	for {
-		if err := runDaemonOnce(ctx, config); err != nil {
+		if err := runDaemonOnce(ctx, config, deliverPatterns, deletePatterns); err != nil {
 			slog.Error("pmgbot daemon cycle failed", "error", err)
 		} else {
 			slog.Info("pmgbot daemon cycle completed")
@@ -61,29 +71,69 @@ func Daemon(ctx context.Context, config DaemonConfig) error {
 	}
 }
 
-func runDaemonOnce(ctx context.Context, config DaemonConfig) error {
-	parseCtx, cancel := context.WithTimeout(ctx, config.ParseTimeout)
-	senders, err := collectDeletedSpamSenders(parseCtx, config.Before)
+func compileDaemonPatterns(config DaemonConfig) (compiledFieldPatterns, compiledFieldPatterns, error) {
+	deliverPatterns, err := compileFieldPatterns("deliver", config.Deliver)
+	if err != nil {
+		return nil, nil, err
+	}
+	deletePatterns, err := compileFieldPatterns("delete", config.Delete)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return deliverPatterns, deletePatterns, nil
+}
+
+func runDaemonOnce(
+	ctx context.Context,
+	config DaemonConfig,
+	deliverPatterns compiledFieldPatterns,
+	deletePatterns compiledFieldPatterns,
+) error {
+	cycleCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+	messages, err := quarantineSpamContext(cycleCtx)
 	cancel()
 	if err != nil {
 		return err
 	}
-	slog.Info("daemon deleted spam senders collected", "count", len(senders))
-	if len(senders) == 0 {
+	slog.Info("daemon quarantine spam loaded", "count", len(messages))
+	if len(messages) == 0 {
 		return nil
 	}
 
-	importCtx, cancel := context.WithTimeout(ctx, config.ImportTimeout)
-	id, err := ImportEmailsContext(importCtx, senders, ImporterConfig{
-		Exclude: config.Exclude,
-		WhoName: strings.TrimSpace(config.ImporterWhoName),
-		Timeout: config.ImportTimeout,
-	})
-	cancel()
-	if err != nil {
-		return err
-	}
-	slog.Info("daemon deleted spam senders imported", "id", id, "count", len(senders))
+	var actionErrors []error
+	var delivered, deleted, skipped int
+	for _, message := range messages {
+		action, ok := decideQuarantineAction(message, deliverPatterns, deletePatterns)
+		if !ok {
+			skipped++
+			continue
+		}
 
-	return nil
+		id, err := quarantineSpamID(message)
+		if err != nil {
+			actionErrors = append(actionErrors, err)
+			slog.Error("quarantine spam action skipped", "error", err, "message", message)
+			continue
+		}
+
+		actionCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+		err = applyQuarantineActionContext(actionCtx, id, action)
+		cancel()
+		if err != nil {
+			actionErrors = append(actionErrors, err)
+			slog.Error("quarantine spam action failed", "id", id, "action", action, "error", err)
+			continue
+		}
+
+		if action == quarantineActionDeliver {
+			delivered++
+		} else {
+			deleted++
+		}
+		slog.Info("quarantine spam action applied", "id", id, "action", action)
+	}
+	slog.Info("daemon quarantine spam processed", "delivered", delivered, "deleted", deleted, "skipped", skipped, "errors", len(actionErrors))
+
+	return errors.Join(actionErrors...)
 }

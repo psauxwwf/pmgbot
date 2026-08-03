@@ -15,12 +15,12 @@ The daemon runs this cycle:
 pmgsh get /quarantine/spam
 ```
 
-3. Matches every quarantine message against `deliver` rules first.
-4. If no deliver rule matches, matches the message against `delete` rules.
-5. Applies the selected action by quarantine message ID.
+3. Matches every quarantine message against `rules` from top to bottom.
+4. Applies the first matching rule action by quarantine message ID.
+5. Skips messages that do not match any rule.
 6. Waits for `daemon.every` and repeats the cycle.
 
-If one message matches both `deliver` and `delete`, `deliver` wins.
+If multiple rules match one message, the first rule in `rules` wins.
 
 PMG output may start with `200 OK`; `pmgbot` ignores that prefix before parsing the JSON array.
 
@@ -29,7 +29,13 @@ PMG output may start with `200 OK`; `pmgbot` ignores that prefix before parsing 
 Run one cycle and exit:
 
 ```bash
-pmgbot --config pmgbot.yaml
+pmgbot run --config pmgbot.yaml
+```
+
+Check what would be delivered or deleted without applying actions:
+
+```bash
+pmgbot check --config pmgbot.yaml
 ```
 
 Run continuously as a daemon:
@@ -55,22 +61,43 @@ sudo: true
 daemon:
   every: 15m0s
   timeout: 10m0s
-deliver:
-  envelope_sender:
-    - '^trusted@example\.com$'
-  from:
-    - 'Trusted Sender <trusted@example\.com>'
-  subject:
-    - '(?i)important report'
-delete:
-  envelope_sender:
-    - '^[^@]+@bad-domain\.ru$'
-  from:
-    - '(?i)casino|lottery'
-  receiver:
-    - '^user@example\.com$'
-  subject:
-    - '(?i)crypto|urgent payment'
+rules:
+  # Важно про логику списков:
+  # - каждый элемент YAML-списка через "-" задает вариант ИЛИ;
+  # - несколько regexp у одного поля тоже задают ИЛИ;
+  # - несколько полей внутри одного элемента "-" задают И.
+  # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
+
+  # Один field + несколько regexp: subject A ИЛИ subject B.
+  - name: Deliver explicitly allowed subjects
+    action: deliver
+    when:
+      - subject:
+          - '^\[ALLOW\]'
+          - "(?i)важный отчет"
+
+  # envelope_sender И (subject A ИЛИ subject B).
+  - name: Delete webmaster registration or payment confirmations
+    action: delete
+    when:
+      - envelope_sender: '^webmaster@rc\.ffff\.ru$'
+        subject:
+          - '^\[SPAM\]: Зарегистрировался новый пользователь$'
+          - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+
+  # (sender A ИЛИ B) И (receiver A ИЛИ B) И (subject A ИЛИ B).
+  - name: Delete payment phishing to finance mailboxes
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@payment-notice\.example\.ru$'
+          - '^[^@]+@bank-alert\.example\.net$'
+        receiver:
+          - '^accounting@example\.com$'
+          - '^finance@example\.com$'
+        subject:
+          - "(?i)payment confirmation required"
+          - "(?i)подтвердите платеж"
 ```
 
 Fields:
@@ -80,12 +107,29 @@ Fields:
 - `sudo`: run external commands through `sudo`.
 - `daemon.every`: how often to run the daemon cycle.
 - `daemon.timeout`: timeout for each PMG operation phase.
-- `deliver`: field-based regexp rules for messages that should be delivered.
-- `delete`: field-based regexp rules for messages that should be deleted.
+- `rules`: ordered list of named matching rules.
+- `rules[].name`: human-readable rule name used in logs.
+- `rules[].action`: `deliver` or `delete`.
+- `rules[].when`: condition groups for this rule.
 
-Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.every` is used only by `pmgbot daemon`; one-shot `pmgbot --config pmgbot.yaml` runs a single cycle immediately and exits.
+Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.every` is used only by `pmgbot daemon`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` logs only matching messages with the action that would be applied, but does not deliver or delete anything.
 
 ## Matching Fields
+
+`rules` is an ordered list. A message matches the first rule where any `when` group matches. In rule conditions, YAML list items written with `-` mean `OR`: multiple `when` groups are alternatives, and multiple regexps under one field are alternatives too. Fields inside one `when` list item are combined with `AND`: every listed field must match at least one of its regexps.
+
+This rule deletes messages where `envelope_sender` matches and `subject` matches either listed regexp:
+
+```yaml
+rules:
+  - name: Delete webmaster notifications
+    action: delete
+    when:
+      - envelope_sender: '^webmaster@rc\.ffff\.ru$'
+        subject:
+          - '^\[SPAM\]: Зарегистрировался новый пользователь$'
+          - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+```
 
 Rule keys must match PMG quarantine JSON field names returned by `/quarantine/spam`:
 
@@ -118,36 +162,38 @@ The `id` is the quarantine API ID returned by `/quarantine/spam`.
 
 ## Regexp Examples
 
+Rule patterns use Go `regexp` syntax, also known as RE2 regular expression syntax. Useful basics: `.*` means any characters, `\.` means a literal dot, `^` means start of string, `$` means end of string, and `(?i)` enables case-insensitive matching.
+
 ### Sender Domains
 
-| What to match                                                | Pattern                              |
-| ------------------------------------------------------------ | ------------------------------------ |
-| Any direct email at `domain.com`, equivalent to `*@domain.com` | `^[^@]+@domain\.com$`               |
-| Any email ending with `@domain.com`                          | `@domain\.com$`                     |
-| Any email at `domain.com` or `example.com`                   | `^[^@]+@(domain|example)\.com$`     |
-| Any subdomain of `domain.com`, for example `a@sub.domain.com` | `^[^@]+@[^@]+\.domain\.com$`       |
-| `domain.com` and any of its subdomains                       | `^[^@]+@([^.@]+\.)*domain\.com$`   |
-| Any `.ru` domain                                             | `^[^@]+@[^@]+\.ru$`                 |
-| Any `.com` or `.net` domain                                  | `^[^@]+@[^@]+\.(com|net)$`          |
+| What to match                                                  | Pattern                          |
+| -------------------------------------------------------------- | -------------------------------- |
+| Any direct email at `domain.com`, equivalent to `*@domain.com` | `^[^@]+@domain\.com$`            |
+| Any email ending with `@domain.com`                            | `@domain\.com$`                  |
+| Any email at `domain.com` or `example.com`                     | `^[^@]+@(domain                  | example)\.com$` |
+| Any subdomain of `domain.com`, for example `a@sub.domain.com`  | `^[^@]+@[^@]+\.domain\.com$`     |
+| `domain.com` and any of its subdomains                         | `^[^@]+@([^.@]+\.)*domain\.com$` |
+| Any `.ru` domain                                               | `^[^@]+@[^@]+\.ru$`              |
+| Any `.com` or `.net` domain                                    | `^[^@]+@[^@]+\.(com              | net)$`          |
 
 ### Specific Emails
 
-| What to match                             | Pattern                         |
-| ----------------------------------------- | ------------------------------- |
-| Only `email@bob.com`                      | `^email@bob\.com$`             |
-| Only `admin@domain.com`                   | `^admin@domain\.com$`          |
-| `admin@domain.com` or `support@domain.com` | `^(admin|support)@domain\.com$` |
-| Any `no-reply` sender                     | `^no-reply@[^@]+$`              |
-| Local part starts with `bounce-`          | `^bounce-[^@]*@[^@]+$`          |
-| Local part contains `mailer`              | `^[^@]*mailer[^@]*@[^@]+$`      |
+| What to match                              | Pattern                    |
+| ------------------------------------------ | -------------------------- |
+| Only `email@bob.com`                       | `^email@bob\.com$`         |
+| Only `admin@domain.com`                    | `^admin@domain\.com$`      |
+| `admin@domain.com` or `support@domain.com` | `^(admin                   | support)@domain\.com$` |
+| Any `no-reply` sender                      | `^no-reply@[^@]+$`         |
+| Local part starts with `bounce-`           | `^bounce-[^@]*@[^@]+$`     |
+| Local part contains `mailer`               | `^[^@]*mailer[^@]*@[^@]+$` |
 
 ### Subjects
 
-| What to match                     | Pattern                    |
-| --------------------------------- | -------------------------- |
-| Case-insensitive `invoice`        | `(?i)invoice`              |
-| Case-insensitive crypto/lottery   | `(?i)crypto|lottery`       |
-| Subject starts with `[SPAM]`      | `^\[SPAM\]`              |
+| What to match                   | Pattern       |
+| ------------------------------- | ------------- |
+| Case-insensitive `invoice`      | `(?i)invoice` |
+| Case-insensitive crypto/lottery | `(?i)crypto   | lottery` |
+| Subject starts with `[SPAM]`    | `^\[SPAM\]`   |
 
 ## Build And Test
 

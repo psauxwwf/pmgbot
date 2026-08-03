@@ -21,12 +21,18 @@ func TestRootCommandsAndFlags(t *testing.T) {
 		}
 	}
 
+	for _, name := range []string{"run", "check", "daemon"} {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd == nil {
+			t.Fatalf("%s command not found", name)
+		}
+	}
 	daemon, _, err := root.Find([]string{"daemon"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if daemon == nil {
-		t.Fatal("daemon command not found")
 	}
 	for _, name := range []string{"before", "since", "timeout", "cmd-timeout", "name"} {
 		if daemon.Flags().Lookup(name) != nil {
@@ -73,26 +79,50 @@ func TestConfigDefault(t *testing.T) {
 	if time.Duration(config.Daemon.Timeout) != defaultDaemonTimeout {
 		t.Fatalf("got daemon timeout %s, want %s", time.Duration(config.Daemon.Timeout), defaultDaemonTimeout)
 	}
-	if config.Deliver["envelope_sender"][0] != `^trusted@example\.com$` {
-		t.Fatalf("got deliver patterns %#v", config.Deliver)
+	if len(config.Rules) != 15 {
+		t.Fatalf("got %d rules, want 15", len(config.Rules))
 	}
-	if config.Deliver["receiver"][0] != `^vip@example\.com$` {
-		t.Fatalf("got deliver patterns %#v", config.Deliver)
+	if config.Rules[0].Name != "Delete webmaster registrations" || config.Rules[0].Action != "delete" {
+		t.Fatalf("got rules %#v", config.Rules)
 	}
-	if config.Delete["envelope_sender"][1] != `^[^@]+@([^.@]+\.)*sendsay\.ru$` {
-		t.Fatalf("got delete patterns %#v", config.Delete)
+	if config.Rules[0].When[0]["subject"][0] != `^\[SPAM\]: Зарегистрировался новый пользователь$` {
+		t.Fatalf("got rules %#v", config.Rules)
+	}
+	if config.Rules[5].Name != "Delete webmaster registration or payment confirmations" || config.Rules[5].When[0]["subject"][1] != `^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$` {
+		t.Fatalf("got rules %#v", config.Rules)
+	}
+	if config.Rules[14].Name != "Delete mixed phishing campaign" || len(config.Rules[14].When) != 2 {
+		t.Fatalf("got rules %#v", config.Rules)
 	}
 	for _, field := range []string{"bytes", "id", "spamlevel", "time"} {
-		if _, ok := config.Deliver[field]; ok {
-			t.Fatalf("unexpected deliver field %q in default config", field)
-		}
-		if _, ok := config.Delete[field]; ok {
-			t.Fatalf("unexpected delete field %q in default config", field)
+		for _, rule := range config.Rules {
+			for _, group := range rule.When {
+				if _, ok := group[field]; ok {
+					t.Fatalf("unexpected field %q in default config", field)
+				}
+			}
 		}
 	}
 }
 
-func TestRootWithoutSubcommandRunsOneCycle(t *testing.T) {
+func TestRootWithoutSubcommandDoesNotRunOneCycle(t *testing.T) {
+	originalRunOnce := runOnce
+	t.Cleanup(func() { runOnce = originalRunOnce })
+
+	runOnce = func(_ context.Context, config pmgbot.DaemonConfig) error {
+		t.Fatalf("root command must not run one cycle, got config %#v", config)
+		return nil
+	}
+
+	root := rootCmd()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunCommandRunsOneCycle(t *testing.T) {
 	originalRunOnce := runOnce
 	t.Cleanup(func() { runOnce = originalRunOnce })
 
@@ -111,14 +141,44 @@ func TestRootWithoutSubcommandRunsOneCycle(t *testing.T) {
 	}
 
 	root := rootCmd()
-	root.SetArgs([]string{"--config", configPath})
+	root.SetArgs([]string{"--config", configPath, "run"})
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
-		t.Fatal("expected root command to run one cycle")
+		t.Fatal("expected run command to run one cycle")
+	}
+}
+
+func TestCheckCommandRunsDryRun(t *testing.T) {
+	originalRunCheck := runCheck
+	t.Cleanup(func() { runCheck = originalRunCheck })
+
+	var called bool
+	runCheck = func(_ context.Context, config pmgbot.DaemonConfig) error {
+		called = true
+		if config.Timeout != defaultDaemonTimeout {
+			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
+		}
+		return nil
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "check"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected check command to run dry-run")
 	}
 }
 

@@ -117,16 +117,23 @@ func TestCompileFieldPatternsIgnoresEmptyFields(t *testing.T) {
 }
 
 func TestDecideQuarantineAction(t *testing.T) {
-	deliver, err := compileFieldPatterns("deliver", FieldPatterns{
-		"envelope_sender": {`^trusted@example\.com$`},
-		"subject":         {`(?i)allow`},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete, err := compileFieldPatterns("delete", FieldPatterns{
-		"envelope_sender": {`@bad\.ru$`},
-		"subject":         {`(?i)casino`},
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Deliver trusted",
+			Action: quarantineActionDeliver,
+			When: RuleGroups{
+				{"envelope_sender": {`^trusted@example\.com$`}},
+				{"subject": {`(?i)allow`}},
+			},
+		},
+		{
+			Name:   "Delete bad",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{"envelope_sender": {`@bad\.ru$`}},
+				{"subject": {`(?i)casino`}},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +162,7 @@ func TestDecideQuarantineAction(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name: "deliver wins",
+			name: "first matching rule wins",
 			message: quarantineSpamMessage{
 				EnvelopeSender: "trusted@example.com",
 				Subject:        "casino",
@@ -173,11 +180,143 @@ func TestDecideQuarantineAction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := decideQuarantineAction(tt.message, deliver, delete)
+			got, _, ok := decideQuarantineAction(tt.message, rules)
 			if ok != tt.wantOK || got != tt.want {
 				t.Fatalf("got %q/%v, want %q/%v", got, ok, tt.want, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestDecideQuarantineActionRequiresAllFieldsInRuleGroup(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete webmaster registration",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{
+					"envelope_sender": {`^webmaster@rc\.ffff\.ru$`},
+					"subject":         {`^\[SPAM\]: Зарегистрировался новый пользователь$`},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		message quarantineSpamMessage
+		wantOK  bool
+	}{
+		{
+			name: "all fields match",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "webmaster@rc.ffff.ru",
+				Subject:        "[SPAM]: Зарегистрировался новый пользователь",
+			},
+			wantOK: true,
+		},
+		{
+			name: "only sender matches",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "webmaster@rc.ffff.ru",
+				Subject:        "[SPAM]: Other",
+			},
+		},
+		{
+			name: "only subject matches",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "other@example.com",
+				Subject:        "[SPAM]: Зарегистрировался новый пользователь",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _, ok := decideQuarantineAction(tt.message, rules)
+			if ok != tt.wantOK {
+				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
+			}
+			if ok && got != quarantineActionDelete {
+				t.Fatalf("got action %q, want delete", got)
+			}
+		})
+	}
+}
+
+func TestDecideQuarantineActionMatchesPatternListAsOr(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete webmaster notifications",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{
+					"envelope_sender": {`^webmaster@rc\.ffff\.ru$`},
+					"subject": {
+						`^\[SPAM\]: Зарегистрировался новый пользователь$`,
+						`^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$`,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		message quarantineSpamMessage
+		wantOK  bool
+	}{
+		{
+			name: "registration",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "webmaster@rc.ffff.ru",
+				Subject:        "[SPAM]: Зарегистрировался новый пользователь",
+			},
+			wantOK: true,
+		},
+		{
+			name: "payment",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "webmaster@rc.ffff.ru",
+				Subject:        "[SPAM]: Платеж 123 на сумму 456 руб. подтвержден",
+			},
+			wantOK: true,
+		},
+		{
+			name: "different subject",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "webmaster@rc.ffff.ru",
+				Subject:        "[SPAM]: Other",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ruleName, ok := decideQuarantineAction(tt.message, rules)
+			if ok != tt.wantOK {
+				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
+			}
+			if ok && (got != quarantineActionDelete || ruleName != "Delete webmaster notifications") {
+				t.Fatalf("got action %q rule %q, want delete rule name", got, ruleName)
+			}
+		})
+	}
+}
+
+func TestCompileRulesValidatesAction(t *testing.T) {
+	_, err := compileRules(Rules{{Name: "Bad action", Action: "archive", When: RuleGroups{{"subject": {`.*`}}}}})
+	if err == nil {
+		t.Fatal("expected action validation error")
+	}
+	if !strings.Contains(err.Error(), `invalid action "archive"`) {
+		t.Fatalf("got error %q", err)
 	}
 }
 

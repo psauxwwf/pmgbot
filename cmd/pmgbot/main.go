@@ -29,6 +29,7 @@ type cliConfig struct {
 
 var (
 	runOnce   = pmgbot.RunOnce
+	runCheck  = pmgbot.Check
 	runDaemon = pmgbot.Daemon
 )
 
@@ -53,7 +54,7 @@ func rootCmd() *cobra.Command {
 				return saveDefaultConfig(config.ConfigPath)
 			}
 
-			return runConfigured(cmd.Context(), config.ConfigPath, runOnce)
+			return cmd.Help()
 		},
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
@@ -73,9 +74,47 @@ func rootCmd() *cobra.Command {
 		"save default yaml config and exit",
 	)
 
-	root.AddCommand(daemonCmd(&config))
+	root.AddCommand(runCmd(&config), checkCmd(&config), daemonCmd(&config))
 
 	return root
+}
+
+func runCmd(logConfig *cliConfig) *cobra.Command {
+	run := &cobra.Command{
+		Use:           "run",
+		Short:         "Run one PMG spam quarantine processing cycle",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if logConfig.SaveConfig {
+				return saveDefaultConfig(logConfig.ConfigPath)
+			}
+
+			return runConfigured(cmd.Context(), logConfig.ConfigPath, runOnce)
+		},
+	}
+
+	return run
+}
+
+func checkCmd(logConfig *cliConfig) *cobra.Command {
+	check := &cobra.Command{
+		Use:           "check",
+		Short:         "Log matching PMG spam quarantine actions without applying them",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if logConfig.SaveConfig {
+				return saveDefaultConfig(logConfig.ConfigPath)
+			}
+
+			return runConfigured(cmd.Context(), logConfig.ConfigPath, runCheck)
+		},
+	}
+
+	return check
 }
 
 func daemonCmd(logConfig *cliConfig) *cobra.Command {
@@ -129,17 +168,132 @@ func defaultFileConfig(_ time.Time) pmgbot.FileConfig {
 			Every:   pmgbot.Duration(defaultDaemonEvery),
 			Timeout: pmgbot.Duration(defaultDaemonTimeout),
 		},
-		Deliver: pmgbot.FieldPatterns{
-			"envelope_sender": {`^trusted@example\.com$`, `^[^@]+@partner\.example\.com$`, `^no-reply@alerts\.example\.com$`},
-			"from":            {`(?i)Trusted Sender <trusted@example\.com>`, `(?i)monitoring|security alert`},
-			"receiver":        {`^vip@example\.com$`, `^admin@example\.com$`, `^support@example\.com$`},
-			"subject":         {`(?i)important report|delivery required`, `(?i)invoice approved|backup completed`, `^\[ALLOW\]`},
-		},
-		Delete: pmgbot.FieldPatterns{
-			"envelope_sender": {`^[^@]+@bad-domain\.ru$`, `^[^@]+@([^.@]+\.)*sendsay\.ru$`, `^bounce-[^@]*@[^@]+$`, `^[^@]+@[^@]+\.ru$`},
-			"from":            {`(?i)casino|lottery|crypto`, `(?i)free money|winner|prize`, `(?i)loan approved`},
-			"receiver":        {`^user@example\.com$`, `^test@example\.com$`, `^spamtrap@example\.com$`},
-			"subject":         {`(?i)crypto|urgent payment|casino`, `(?i)limited offer|act now`, `(?i)password expired|verify account`},
+		Rules: pmgbot.Rules{
+			{
+				Name:   "Delete webmaster registrations",
+				Action: "delete",
+				When:   pmgbot.RuleGroups{{"subject": {`^\[SPAM\]: Зарегистрировался новый пользователь$`}}},
+			},
+			{
+				Name:   "Deliver explicitly allowed subjects",
+				Action: "deliver",
+				When:   pmgbot.RuleGroups{{"subject": {`^\[ALLOW\]`, `(?i)важный отчет`, `(?i)backup completed`}}},
+			},
+			{
+				Name:   "Delete obvious sender domains",
+				Action: "delete",
+				When:   pmgbot.RuleGroups{{"envelope_sender": {`^[^@]+@bad-domain\.ru$`, `^[^@]+@([^.@]+\.)*sendsay\.ru$`, `^bounce-[^@]*@[^@]+$`}}},
+			},
+			{
+				Name:   "Delete webmaster registration exact sender and subject",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^webmaster@rc\.ffff\.ru$`},
+					"subject":         {`^\[SPAM\]: Зарегистрировался новый пользователь$`},
+				}},
+			},
+			{
+				Name:   "Deliver monitoring to admins",
+				Action: "deliver",
+				When: pmgbot.RuleGroups{{
+					"from":     {`(?i)monitoring|security alert`},
+					"receiver": {`^admin@example\.com$`, `^support@example\.com$`},
+				}},
+			},
+			{
+				Name:   "Delete webmaster registration or payment confirmations",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^webmaster@rc\.ffff\.ru$`},
+					"subject": {
+						`^\[SPAM\]: Зарегистрировался новый пользователь$`,
+						`^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$`,
+					},
+				}},
+			},
+			{
+				Name:   "Delete payment subjects from noisy senders",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^[^@]+@promo\.example\.com$`, `^[^@]+@mailing\.example\.net$`},
+					"subject":         {`(?i)оплата|платеж|invoice`},
+				}},
+			},
+			{
+				Name:   "Delete marketing senders with spam subjects",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^[^@]+@promo\.example\.com$`, `^[^@]+@offers\.example\.org$`},
+					"subject":         {`(?i)limited offer`, `(?i)act now`, `(?i)скидка .* только сегодня`},
+				}},
+			},
+			{
+				Name:   "Deliver trusted departments to service mailboxes",
+				Action: "deliver",
+				When: pmgbot.RuleGroups{{
+					"from":     {`(?i)Finance Department`, `(?i)Security Team`},
+					"receiver": {`^accounting@example\.com$`, `^security@example\.com$`},
+				}},
+			},
+			{
+				Name:   "Delete fake invoices to accounting",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^[^@]+@unknown-billing\.example\.com$`},
+					"receiver":        {`^accounting@example\.com$`},
+					"subject":         {`(?i)invoice|счет|оплата`},
+				}},
+			},
+			{
+				Name:   "Deliver internal operational alerts",
+				Action: "deliver",
+				When: pmgbot.RuleGroups{{
+					"from":     {`(?i)Operations Center`},
+					"receiver": {`^admin@example\.com$`},
+					"subject":  {`(?i)incident resolved`, `(?i)service restored`},
+				}},
+			},
+			{
+				Name:   "Deliver critical service messages",
+				Action: "deliver",
+				When: pmgbot.RuleGroups{
+					{"envelope_sender": {`^postmaster@example\.com$`}, "subject": {`(?i)delivery status notification`}},
+					{"from": {`(?i)Security Alert`}, "subject": {`(?i)critical|urgent`}},
+				},
+			},
+			{
+				Name:   "Delete credential phishing variants",
+				Action: "delete",
+				When: pmgbot.RuleGroups{
+					{"subject": {`(?i)password expired|verify account`}},
+					{"from": {`(?i)helpdesk|support`}, "subject": {`(?i)confirm your mailbox`}},
+					{"envelope_sender": {`^[^@]+@login-alerts\.example\.ru$`}, "receiver": {`^user@example\.com$`}},
+				},
+			},
+			{
+				Name:   "Delete payment phishing to finance mailboxes",
+				Action: "delete",
+				When: pmgbot.RuleGroups{{
+					"envelope_sender": {`^[^@]+@payment-notice\.example\.ru$`, `^[^@]+@bank-alert\.example\.net$`},
+					"receiver":        {`^accounting@example\.com$`, `^finance@example\.com$`},
+					"subject":         {`(?i)payment confirmation required`, `(?i)подтвердите платеж`},
+				}},
+			},
+			{
+				Name:   "Delete mixed phishing campaign",
+				Action: "delete",
+				When: pmgbot.RuleGroups{
+					{
+						"envelope_sender": {`^[^@]+@secure-mail\.example\.ru$`, `^[^@]+@account-check\.example\.ru$`},
+						"subject":         {`(?i)account suspended`, `(?i)security verification`},
+					},
+					{
+						"from":     {`(?i)IT Support`, `(?i)Mail Administrator`},
+						"receiver": {`^user@example\.com$`, `^test@example\.com$`},
+						"subject":  {`(?i)update your password`, `(?i)mailbox quota exceeded`},
+					},
+				},
+			},
 		},
 	}
 }

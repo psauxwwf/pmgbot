@@ -1,5 +1,4 @@
 /bin/
-/pmgbot.yaml
 /TODO.md
 /.opencode/plans/1785582152526-add-exclude-import-filter.md
 /exclude.txt
@@ -7,3 +6,4 @@
 /tmp.txt
 /.opencode/plans/1785740191013-playful-comet.md
 /spam.txt
+/pmgbot.override.yaml

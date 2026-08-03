@@ -13,8 +13,7 @@ import (
 type DaemonConfig struct {
 	Every   time.Duration
 	Timeout time.Duration
-	Deliver FieldPatterns
-	Delete  FieldPatterns
+	Rules   Rules
 }
 
 type FileConfig struct {
@@ -22,8 +21,7 @@ type FileConfig struct {
 	LogPath  string           `yaml:"log_path"`
 	Sudo     bool             `yaml:"sudo"`
 	Daemon   FileDaemonConfig `yaml:"daemon"`
-	Deliver  FieldPatterns    `yaml:"deliver"`
-	Delete   FieldPatterns    `yaml:"delete"`
+	Rules    Rules            `yaml:"rules"`
 }
 
 type FileDaemonConfig struct {
@@ -32,6 +30,84 @@ type FileDaemonConfig struct {
 }
 
 type FieldPatterns map[string][]string
+
+type Rules []Rule
+
+type Rule struct {
+	Name   string           `yaml:"name"`
+	Action quarantineAction `yaml:"action"`
+	When   RuleGroups       `yaml:"when"`
+}
+
+type RuleGroups []FieldPatterns
+
+func (groups RuleGroups) MarshalYAML() (any, error) {
+	return []FieldPatterns(groups), nil
+}
+
+func (groups *RuleGroups) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		return groups.unmarshalRuleList(value)
+	case yaml.ScalarNode:
+		if strings.TrimSpace(value.Value) == "" {
+			*groups = nil
+			return nil
+		}
+	}
+
+	return fmt.Errorf("rules must be a rule list")
+}
+
+func (groups *RuleGroups) unmarshalRuleList(value *yaml.Node) error {
+	var loaded RuleGroups
+	for _, item := range value.Content {
+		if item.Kind != yaml.MappingNode {
+			return fmt.Errorf("rule must be a field map")
+		}
+
+		rule := make(FieldPatterns)
+		for i := 0; i < len(item.Content); i += 2 {
+			field := strings.TrimSpace(item.Content[i].Value)
+			patterns, err := decodePatternList(item.Content[i+1])
+			if err != nil {
+				return fmt.Errorf("decode patterns for field %q: %w", field, err)
+			}
+			if field == "" || !hasFieldPatterns(patterns) {
+				continue
+			}
+
+			rule[field] = patterns
+		}
+		if len(rule) == 0 {
+			continue
+		}
+
+		loaded = append(loaded, rule)
+	}
+
+	*groups = loaded
+	return nil
+}
+
+func decodePatternList(value *yaml.Node) ([]string, error) {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		return []string{value.Value}, nil
+	case yaml.SequenceNode:
+		patterns := make([]string, 0, len(value.Content))
+		for _, item := range value.Content {
+			if item.Kind != yaml.ScalarNode {
+				return nil, fmt.Errorf("pattern must be a string")
+			}
+			patterns = append(patterns, item.Value)
+		}
+
+		return patterns, nil
+	default:
+		return nil, fmt.Errorf("patterns must be a string or string list")
+	}
+}
 
 type Duration time.Duration
 
@@ -123,7 +199,6 @@ func (config FileConfig) DaemonConfig() DaemonConfig {
 	return DaemonConfig{
 		Every:   time.Duration(config.Daemon.Every),
 		Timeout: time.Duration(config.Daemon.Timeout),
-		Deliver: config.Deliver,
-		Delete:  config.Delete,
+		Rules:   config.Rules,
 	}
 }

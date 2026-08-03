@@ -23,6 +23,13 @@ type quarantineSpamMessage struct {
 }
 
 type compiledFieldPatterns map[string][]*regexp.Regexp
+type compiledRuleGroups []compiledFieldPatterns
+
+type compiledRule struct {
+	Name   string
+	Action quarantineAction
+	When   compiledRuleGroups
+}
 
 type quarantineAction string
 
@@ -30,6 +37,11 @@ const (
 	quarantineActionDeliver quarantineAction = "deliver"
 	quarantineActionDelete  quarantineAction = "delete"
 )
+
+var quarantineActions = []quarantineAction{
+	quarantineActionDeliver,
+	quarantineActionDelete,
+}
 
 func pmgQuarantineSpamContext(ctx context.Context) ([]quarantineSpamMessage, error) {
 	pmgshCmd, cancel, err := cmd.NewContext(ctx, "pmgsh", []string{"get", "/quarantine/spam"})
@@ -92,6 +104,54 @@ func compileFieldPatterns(action string, patterns FieldPatterns) (compiledFieldP
 	return compiled, nil
 }
 
+func compileRuleGroups(action string, groups RuleGroups) (compiledRuleGroups, error) {
+	compiled := make(compiledRuleGroups, 0, len(groups))
+	for _, group := range groups {
+		compiledGroup, err := compileFieldPatterns(action, group)
+		if err != nil {
+			return nil, err
+		}
+		if len(compiledGroup) == 0 {
+			continue
+		}
+
+		compiled = append(compiled, compiledGroup)
+	}
+
+	return compiled, nil
+}
+
+func compileRules(rules Rules) ([]compiledRule, error) {
+	compiled := make([]compiledRule, 0, len(rules))
+	for i, rule := range rules {
+		name := strings.TrimSpace(rule.Name)
+		if name == "" {
+			name = fmt.Sprintf("rule %d", i+1)
+		}
+
+		action := quarantineAction(strings.TrimSpace(string(rule.Action)))
+		if !slices.Contains(quarantineActions, action) {
+			return nil, fmt.Errorf("%s has invalid action %q", name, rule.Action)
+		}
+
+		when, err := compileRuleGroups(name, rule.When)
+		if err != nil {
+			return nil, err
+		}
+		if len(when) == 0 {
+			return nil, fmt.Errorf("%s must have at least one condition group", name)
+		}
+
+		compiled = append(compiled, compiledRule{
+			Name:   name,
+			Action: action,
+			When:   when,
+		})
+	}
+
+	return compiled, nil
+}
+
 func hasFieldPatterns(patterns []string) bool {
 	for _, pattern := range patterns {
 		if strings.TrimSpace(pattern) != "" {
@@ -102,39 +162,53 @@ func hasFieldPatterns(patterns []string) bool {
 	return false
 }
 
-func matchFieldPatterns(message quarantineSpamMessage, patterns compiledFieldPatterns) bool {
-	for field, fieldPatterns := range patterns {
-		text, ok := quarantineMessageFieldString(message, field)
-		if !ok {
-			continue
-		}
-		if text == "" {
-			continue
-		}
-
-		for _, pattern := range fieldPatterns {
-			if pattern.MatchString(text) {
-				return true
-			}
+func matchRuleGroups(message quarantineSpamMessage, groups compiledRuleGroups) bool {
+	for _, group := range groups {
+		if matchFieldPatternGroup(message, group) {
+			return true
 		}
 	}
 
 	return false
 }
 
-func decideQuarantineAction(
-	message quarantineSpamMessage,
-	deliverPatterns compiledFieldPatterns,
-	deletePatterns compiledFieldPatterns,
-) (quarantineAction, bool) {
-	if matchFieldPatterns(message, deliverPatterns) {
-		return quarantineActionDeliver, true
-	}
-	if matchFieldPatterns(message, deletePatterns) {
-		return quarantineActionDelete, true
+func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFieldPatterns) bool {
+	if len(patterns) == 0 {
+		return false
 	}
 
-	return "", false
+	for field, fieldPatterns := range patterns {
+		text, ok := quarantineMessageFieldString(message, field)
+		if !ok || text == "" {
+			return false
+		}
+
+		var matched bool
+		for _, pattern := range fieldPatterns {
+			if pattern.MatchString(text) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+func decideQuarantineAction(
+	message quarantineSpamMessage,
+	rules []compiledRule,
+) (quarantineAction, string, bool) {
+	for _, rule := range rules {
+		if matchRuleGroups(message, rule.When) {
+			return rule.Action, rule.Name, true
+		}
+	}
+
+	return "", "", false
 }
 
 func quarantineSpamID(message quarantineSpamMessage) (string, error) {

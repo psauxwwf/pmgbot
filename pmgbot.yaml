@@ -1,0 +1,172 @@
+log_level: info
+log_path: ""
+sudo: true
+daemon:
+  every: 15m0s
+  timeout: 10m0s
+
+rules:
+  # Важно про логику списков:
+  # - каждый элемент YAML-списка через "-" задает вариант ИЛИ;
+  # - несколько regexp у одного поля тоже задают ИЛИ;
+  # - несколько полей внутри одного элемента "-" задают И.
+  # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
+
+  # === 1. Самые простые правила ===
+  # Один field + один regexp: subject должен совпасть с этим выражением.
+  - name: Delete webmaster registrations
+    action: delete
+    when:
+      - subject: '^\[SPAM\]: Зарегистрировался новый пользователь$'
+
+  # Один field + несколько regexp: subject A ИЛИ subject B ИЛИ subject C.
+  - name: Deliver explicitly allowed subjects
+    action: deliver
+    when:
+      - subject:
+          - '^\[ALLOW\]'
+          - "(?i)важный отчет"
+          - "(?i)backup completed"
+
+  # Один field + несколько regexp: envelope_sender A ИЛИ envelope_sender B.
+  - name: Delete obvious sender domains
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@bad-domain\.ru$'
+          - '^[^@]+@([^.@]+\.)*sendsay\.ru$'
+          - "^bounce-[^@]*@[^@]+$"
+
+  # === 2. Простые AND-правила ===
+  # envelope_sender И subject: оба поля должны совпасть.
+  - name: Delete webmaster registration exact sender and subject
+    action: delete
+    when:
+      - envelope_sender: '^webmaster@rc\.ffff\.ru$'
+        subject: '^\[SPAM\]: Зарегистрировался новый пользователь$'
+
+  # from И (receiver A ИЛИ receiver B): from должен совпасть, а receiver может быть любым из списка.
+  - name: Deliver monitoring to admins
+    action: deliver
+    when:
+      - from: "(?i)monitoring|security alert"
+        receiver:
+          - '^admin@example\.com$'
+          - '^support@example\.com$'
+
+  # === 3. AND + OR внутри одного поля ===
+  # envelope_sender И (subject A ИЛИ subject B).
+  - name: Delete webmaster registration or payment confirmations
+    action: delete
+    when:
+      - envelope_sender: '^webmaster@rc\.ffff\.ru$'
+        subject:
+          - '^\[SPAM\]: Зарегистрировался новый пользователь$'
+          - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+
+  # (envelope_sender A ИЛИ envelope_sender B) И subject.
+  - name: Delete payment subjects from noisy senders
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@promo\.example\.com$'
+          - '^[^@]+@mailing\.example\.net$'
+        subject: "(?i)оплата|платеж|invoice"
+
+  # === 4. OR + OR внутри AND-группы ===
+  # (envelope_sender A ИЛИ B) И (subject A ИЛИ B ИЛИ C).
+  - name: Delete marketing senders with spam subjects
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@promo\.example\.com$'
+          - '^[^@]+@offers\.example\.org$'
+        subject:
+          - "(?i)limited offer"
+          - "(?i)act now"
+          - "(?i)скидка .* только сегодня"
+
+  # (from A ИЛИ B) И (receiver A ИЛИ B).
+  - name: Deliver trusted departments to service mailboxes
+    action: deliver
+    when:
+      - from:
+          - "(?i)Finance Department"
+          - "(?i)Security Team"
+        receiver:
+          - '^accounting@example\.com$'
+          - '^security@example\.com$'
+
+  # === 5. Три условия через AND ===
+  # envelope_sender И receiver И subject: должны совпасть все три поля.
+  - name: Delete fake invoices to accounting
+    action: delete
+    when:
+      - envelope_sender: '^[^@]+@unknown-billing\.example\.com$'
+        receiver: '^accounting@example\.com$'
+        subject: "(?i)invoice|счет|оплата"
+
+  # from И receiver И subject, при этом subject содержит OR.
+  - name: Deliver internal operational alerts
+    action: deliver
+    when:
+      - from: "(?i)Operations Center"
+        receiver: '^admin@example\.com$'
+        subject:
+          - "(?i)incident resolved"
+          - "(?i)service restored"
+
+  # === 6. OR между разными when-группами ===
+  # Сработает первая группа ИЛИ вторая группа.
+  - name: Deliver critical service messages
+    action: deliver
+    when:
+      - envelope_sender: '^postmaster@example\.com$'
+        subject: "(?i)delivery status notification"
+      - from: "(?i)Security Alert"
+        subject: "(?i)critical|urgent"
+
+  # Разные сценарии удаления в одном правиле: группа 1 ИЛИ группа 2 ИЛИ группа 3.
+  - name: Delete credential phishing variants
+    action: delete
+    when:
+      - subject: "(?i)password expired|verify account"
+      - from: "(?i)helpdesk|support"
+        subject: "(?i)confirm your mailbox"
+      - envelope_sender: '^[^@]+@login-alerts\.example\.ru$'
+        receiver: '^user@example\.com$'
+
+  # === 7. Сложные смешанные варианты ===
+  # (sender A ИЛИ B) И (receiver A ИЛИ B) И (subject A ИЛИ B).
+  - name: Delete payment phishing to finance mailboxes
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@payment-notice\.example\.ru$'
+          - '^[^@]+@bank-alert\.example\.net$'
+        receiver:
+          - '^accounting@example\.com$'
+          - '^finance@example\.com$'
+        subject:
+          - "(?i)payment confirmation required"
+          - "(?i)подтвердите платеж"
+
+  # (group1: sender OR + subject OR) ИЛИ (group2: from OR + receiver OR + subject OR).
+  - name: Delete mixed phishing campaign
+    action: delete
+    when:
+      - envelope_sender:
+          - '^[^@]+@secure-mail\.example\.ru$'
+          - '^[^@]+@account-check\.example\.ru$'
+        subject:
+          - "(?i)account suspended"
+          - "(?i)security verification"
+      - from:
+          - "(?i)IT Support"
+          - "(?i)Mail Administrator"
+        receiver:
+          - '^user@example\.com$'
+          - '^test@example\.com$'
+        subject:
+          - "(?i)update your password"
+          - "(?i)mailbox quota exceeded"

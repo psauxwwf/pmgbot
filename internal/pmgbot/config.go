@@ -13,6 +13,7 @@ import (
 type ParserConfig struct {
 	Before    time.Duration
 	Blacklist string
+	Exclude   string
 	Timeout   time.Duration
 }
 

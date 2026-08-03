@@ -129,6 +129,7 @@ func parseCmd(logConfig *cliConfig) *cobra.Command {
 			}
 
 			config.Blacklist = logConfig.Blacklist
+			config.Exclude = logConfig.Exclude
 			pmgcmd.SetSudo(logConfig.Sudo)
 
 			if err := configureLogger(logConfig.LogLevel, logConfig.LogPath); err != nil {

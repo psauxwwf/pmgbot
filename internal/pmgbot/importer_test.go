@@ -169,6 +169,21 @@ func TestExcludeEmailsDomainWildcardPattern(t *testing.T) {
 	}
 }
 
+func TestExcludeEmailsFiltersMergedBlacklistSenders(t *testing.T) {
+	merged := appendUniqueSenders(
+		[]string{"old@domain.com", "keep@example.com"},
+		[]string{"new@domain.com", "next@example.com"},
+	)
+	got, err := excludeEmails(merged, []string{`^[^@]+@domain\.com$`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"keep@example.com", "next@example.com"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
 func TestExcludeEmailsReturnsRegexError(t *testing.T) {
 	_, err := excludeEmails([]string{"a@example.com"}, []string{"["})
 	if err == nil {

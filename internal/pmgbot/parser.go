@@ -61,6 +61,15 @@ func ParseContext(ctx context.Context, config ParserConfig) error {
 	}
 	senders = appendUniqueSenders(existingSenders, senders)
 	slog.Info("merged deleted spam senders with existing blacklist", "blacklist", config.Blacklist, "count", len(senders))
+	excludedSenders, err := readEmailList(config.Exclude)
+	if err != nil {
+		return err
+	}
+	senders, err = excludeEmails(senders, excludedSenders)
+	if err != nil {
+		return err
+	}
+	slog.Info("excluded senders filtered from blacklist", "exclude", config.Exclude, "excluded_count", len(excludedSenders), "count", len(senders))
 
 	if err := fs.WriteLines(config.Blacklist, senders); err != nil {
 		return fmt.Errorf("write %s: %w", config.Blacklist, err)

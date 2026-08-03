@@ -23,7 +23,7 @@ Email addresses are normalized before processing: surrounding whitespace is trim
 
 ### parse
 
-Collects senders from deleted spam messages and writes them to a blacklist file.
+Collects senders from deleted spam messages, applies exclusions, and writes the result to a blacklist file.
 
 ```bash
 pmgbot parse --blacklist blacklist.txt --before 30m
@@ -36,9 +36,11 @@ What `parse` does:
 - reads the discovered files;
 - extracts sender email addresses;
 - merges them with the existing `blacklist.txt` content;
+- applies regexp exclusions from `exclude.txt`;
 - writes the unique list back to `blacklist.txt`.
 
 If `blacklist.txt` does not exist, it is created when the result is written.
+If `exclude.txt` does not exist, this is not an error. It behaves the same as an empty exclude file.
 
 ### import
 

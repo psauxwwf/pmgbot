@@ -80,7 +80,7 @@ func rootCmd() *cobra.Command {
 		&config.Exclude,
 		"exclude",
 		defaultExclude,
-		"path for senders to skip during import",
+		"path for sender regexp patterns to skip during import",
 	)
 	root.PersistentFlags().StringVar(
 		&config.LogPath,

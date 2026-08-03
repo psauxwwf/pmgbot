@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -70,7 +71,10 @@ func ImportEmailsContext(ctx context.Context, emails []string, config ImporterCo
 	if err != nil {
 		return 0, err
 	}
-	emails = excludeEmails(emails, excludedEmails)
+	emails, err = excludeEmails(emails, excludedEmails)
+	if err != nil {
+		return 0, err
+	}
 
 	slog.Info("starting PMG who email import",
 		"who_name", name,
@@ -103,13 +107,24 @@ func ImportEmailsContext(ctx context.Context, emails []string, config ImporterCo
 	return id, nil
 }
 
-func excludeEmails(emails []string, excluded []string) []string {
-	var normalizedExcluded []string
-	for _, email := range excluded {
-		email = strings.ToLower(strings.TrimSpace(email))
-		if email != "" && !slices.Contains(normalizedExcluded, email) {
-			normalizedExcluded = append(normalizedExcluded, email)
+func excludeEmails(emails []string, excluded []string) ([]string, error) {
+	var (
+		normalizedExcluded []string
+		excludePatterns    []*regexp.Regexp
+	)
+	for _, pattern := range excluded {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == "" || slices.Contains(normalizedExcluded, pattern) {
+			continue
 		}
+
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("compile exclude pattern %q: %w", pattern, err)
+		}
+
+		normalizedExcluded = append(normalizedExcluded, pattern)
+		excludePatterns = append(excludePatterns, compiled)
 	}
 
 	var included []string
@@ -118,13 +133,25 @@ func excludeEmails(emails []string, excluded []string) []string {
 		if email == "" {
 			continue
 		}
-		if slices.Contains(normalizedExcluded, email) || slices.Contains(included, email) {
+		if slices.Contains(included, email) {
 			continue
 		}
+
+		excludedEmail := false
+		for _, pattern := range excludePatterns {
+			if pattern.MatchString(email) {
+				excludedEmail = true
+				break
+			}
+		}
+		if excludedEmail {
+			continue
+		}
+
 		included = append(included, email)
 	}
 
-	return included
+	return included, nil
 }
 
 func pmgWhoID(name string, timeout time.Duration) (int, error) {

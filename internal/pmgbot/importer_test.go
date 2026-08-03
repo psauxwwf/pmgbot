@@ -1,6 +1,10 @@
 package pmgbot
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestPMGWhoIDFromOutput(t *testing.T) {
 	out := []byte(`200 OK
@@ -138,17 +142,39 @@ func TestMissingPMGWhoEmails(t *testing.T) {
 }
 
 func TestExcludeEmails(t *testing.T) {
-	got := excludeEmails(
-		[]string{"a@example.com", "B@example.com", " c@example.com ", "a@example.com", ""},
-		[]string{"b@example.com", "C@example.com", " c@example.com "},
+	got, err := excludeEmails(
+		[]string{"a@example.com", "B@example.com", " c@example.org ", "keep@example.net", "a@example.com", ""},
+		[]string{`^b@example\.com$`, `@example\.org$`, `^B@EXAMPLE\.COM$`},
 	)
-	want := []string{"a@example.com"}
-	if len(got) != len(want) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a@example.com", "keep@example.net"}
+	if !slices.Equal(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %#v, want %#v", got, want)
-		}
+}
+
+func TestExcludeEmailsDomainWildcardPattern(t *testing.T) {
+	got, err := excludeEmails(
+		[]string{"user@domain.com", "other@DOMAIN.com", "admin@sub.domain.com", "keep@example.com"},
+		[]string{`^[^@]+@domain\.com$`},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"admin@sub.domain.com", "keep@example.com"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestExcludeEmailsReturnsRegexError(t *testing.T) {
+	_, err := excludeEmails([]string{"a@example.com"}, []string{"["})
+	if err == nil {
+		t.Fatal("expected regexp error")
+	}
+	if !strings.Contains(err.Error(), "compile exclude pattern") {
+		t.Fatalf("got %q, want compile exclude pattern error", err)
 	}
 }

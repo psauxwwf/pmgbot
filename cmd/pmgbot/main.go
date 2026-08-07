@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,9 +29,10 @@ type cliConfig struct {
 }
 
 var (
-	runOnce   = pmgbot.RunOnce
-	runCheck  = pmgbot.Check
-	runDaemon = pmgbot.Daemon
+	runOnce    = pmgbot.RunOnce
+	runCheck   = pmgbot.Check
+	runDaemon  = pmgbot.Daemon
+	runAnalyze = pmgbot.Analyze
 )
 
 func main() {
@@ -74,7 +76,7 @@ func rootCmd() *cobra.Command {
 		"save default yaml config and exit",
 	)
 
-	root.AddCommand(runCmd(&config), checkCmd(&config), daemonCmd(&config))
+	root.AddCommand(runCmd(&config), checkCmd(&config), analyzeCmd(&config), daemonCmd(&config))
 
 	return root
 }
@@ -117,6 +119,25 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 	return check
 }
 
+func analyzeCmd(logConfig *cliConfig) *cobra.Command {
+	analyze := &cobra.Command{
+		Use:           "analyze",
+		Short:         "Analyze PMG spam quarantine sender and subject repeats",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if logConfig.SaveConfig {
+				return saveDefaultConfig(logConfig.ConfigPath)
+			}
+
+			return runConfiguredAnalyze(cmd.Context(), logConfig.ConfigPath, cmd.OutOrStdout(), runAnalyze)
+		},
+	}
+
+	return analyze
+}
+
 func daemonCmd(logConfig *cliConfig) *cobra.Command {
 	daemon := &cobra.Command{
 		Use:           "daemon",
@@ -157,6 +178,25 @@ func runConfigured(
 	}
 
 	return run(ctx, fileConfig.DaemonConfig())
+}
+
+func runConfiguredAnalyze(
+	ctx context.Context,
+	configPath string,
+	output io.Writer,
+	run func(context.Context, pmgbot.DaemonConfig, io.Writer) error,
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	if err := configureLogger(fileConfig.LogLevel, fileConfig.LogPath); err != nil {
+		return err
+	}
+
+	return run(ctx, fileConfig.DaemonConfig(), output)
 }
 
 func defaultFileConfig(_ time.Time) pmgbot.FileConfig {

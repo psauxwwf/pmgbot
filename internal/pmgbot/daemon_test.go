@@ -63,16 +63,13 @@ func TestDaemonValidatesRuleActions(t *testing.T) {
 }
 
 func TestRunOnceDoesNotValidateEvery(t *testing.T) {
-	originalSpam := quarantineSpamContext
-	t.Cleanup(func() { quarantineSpamContext = originalSpam })
-
-	quarantineSpamContext = func(context.Context) ([]quarantineSpamMessage, error) {
-		return nil, nil
-	}
-
-	err := RunOnce(context.Background(), DaemonConfig{
+	err := runDaemonOnce(context.Background(), DaemonConfig{
 		Every:   0,
 		Timeout: time.Minute,
+	}, nil, func(context.Context) ([]quarantineSpamMessage, error) {
+		return nil, nil
+	}, func(context.Context, string, quarantineAction) error {
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("expected one-shot run without daemon every, got %v", err)
@@ -87,31 +84,20 @@ func TestRunOnceValidatesTimeout(t *testing.T) {
 }
 
 func TestCheckDoesNotApplyActions(t *testing.T) {
-	originalSpam := quarantineSpamContext
-	originalAction := applyQuarantineActionContext
-	t.Cleanup(func() {
-		quarantineSpamContext = originalSpam
-		applyQuarantineActionContext = originalAction
-	})
+	rules, err := compileRules(Rules{{
+		Name:   "Delete spam",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`Lottery`}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	quarantineSpamContext = func(context.Context) ([]quarantineSpamMessage, error) {
+	err = runDaemonCheck(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, func(context.Context) ([]quarantineSpamMessage, error) {
 		return []quarantineSpamMessage{
 			{ID: "delete-id", Subject: "Lottery", EnvelopeSender: "bad@example.com"},
 			{ID: "skip-id", Subject: "Normal"},
 		}, nil
-	}
-	applyQuarantineActionContext = func(_ context.Context, id string, action quarantineAction) error {
-		t.Fatalf("check must not apply action %s to %s", action, id)
-		return nil
-	}
-
-	err := Check(context.Background(), DaemonConfig{
-		Timeout: time.Minute,
-		Rules: Rules{{
-			Name:   "Delete spam",
-			Action: quarantineActionDelete,
-			When:   RuleGroups{{"subject": {`Lottery`}}},
-		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,14 +105,7 @@ func TestCheckDoesNotApplyActions(t *testing.T) {
 }
 
 func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
-	originalSpam := quarantineSpamContext
-	originalAction := applyQuarantineActionContext
-	t.Cleanup(func() {
-		quarantineSpamContext = originalSpam
-		applyQuarantineActionContext = originalAction
-	})
-
-	quarantineSpamContext = func(context.Context) ([]quarantineSpamMessage, error) {
+	quarantineSpam := func(context.Context) ([]quarantineSpamMessage, error) {
 		return []quarantineSpamMessage{
 			{ID: "deliver-id", Subject: "Important", EnvelopeSender: "bad@example.com"},
 			{ID: "delete-id", Subject: "Lottery", EnvelopeSender: "bad@example.com"},
@@ -136,7 +115,7 @@ func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
 	}
 
 	var actions []string
-	applyQuarantineActionContext = func(_ context.Context, id string, action quarantineAction) error {
+	applyQuarantineAction := func(_ context.Context, id string, action quarantineAction) error {
 		actions = append(actions, id+":"+string(action))
 		if id == "fail-id" {
 			return context.Canceled
@@ -161,7 +140,7 @@ func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
 			},
 		},
 	}
-	err := runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules)
+	err := runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, quarantineSpam, applyQuarantineAction)
 	if err == nil {
 		t.Fatal("expected action error")
 	}

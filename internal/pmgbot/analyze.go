@@ -19,12 +19,16 @@ type spamAnalysisKey struct {
 }
 
 func Analyze(ctx context.Context, config DaemonConfig, output io.Writer) error {
+	return analyze(ctx, config, output, pmgQuarantineSpamContext)
+}
+
+func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarantineSpam quarantineSpamFunc) error {
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
 
 	cycleCtx, cancel := context.WithTimeout(ctx, config.Timeout)
-	messages, err := quarantineSpamContext(cycleCtx)
+	messages, err := quarantineSpam(cycleCtx)
 	cancel()
 	if err != nil {
 		return err

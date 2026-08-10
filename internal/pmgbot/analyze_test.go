@@ -32,18 +32,13 @@ func TestAnalyzeSpamMessagesCountsSenderAndSubject(t *testing.T) {
 }
 
 func TestAnalyzeWritesRows(t *testing.T) {
-	originalSpam := quarantineSpamContext
-	t.Cleanup(func() { quarantineSpamContext = originalSpam })
-
-	quarantineSpamContext = func(context.Context) ([]quarantineSpamMessage, error) {
+	var out bytes.Buffer
+	err := analyze(context.Background(), DaemonConfig{Timeout: time.Minute}, &out, func(context.Context) ([]quarantineSpamMessage, error) {
 		return []quarantineSpamMessage{
 			{EnvelopeSender: "sender@example.com", Subject: "Subject"},
 			{EnvelopeSender: "sender@example.com", Subject: "Subject"},
 		}, nil
-	}
-
-	var out bytes.Buffer
-	err := Analyze(context.Background(), DaemonConfig{Timeout: time.Minute}, &out)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

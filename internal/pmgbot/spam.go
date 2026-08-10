@@ -8,19 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	"pmgbot/pkg/cmd"
+	"pmgbot/pkg/pmg"
 )
 
-type quarantineSpamMessage struct {
-	Bytes          int64  `json:"bytes"`
-	EnvelopeSender string `json:"envelope_sender"`
-	From           string `json:"from"`
-	ID             string `json:"id"`
-	Receiver       string `json:"receiver"`
-	SpamLevel      int64  `json:"spamlevel"`
-	Subject        string `json:"subject"`
-	Time           int64  `json:"time"`
-}
+type quarantineSpamMessage = pmg.SpamMessage
 
 type compiledFieldPatterns map[string][]*regexp.Regexp
 type compiledRuleGroups []compiledFieldPatterns
@@ -44,30 +35,7 @@ var quarantineActions = []quarantineAction{
 }
 
 func pmgQuarantineSpamContext(ctx context.Context) ([]quarantineSpamMessage, error) {
-	pmgshCmd, cancel, err := cmd.NewContext(ctx, "pmgsh", []string{"get", "/quarantine/spam"})
-	if err != nil {
-		return nil, fmt.Errorf("create pmgsh quarantine spam command: %w", err)
-	}
-	defer cancel()
-
-	out, err := pmgshCmd.Run()
-	if err != nil {
-		if strings.TrimSpace(string(out)) != "" {
-			return nil, fmt.Errorf("pmgsh quarantine spam failed: %w: %s", err, strings.TrimSpace(string(out)))
-		}
-		return nil, fmt.Errorf("pmgsh quarantine spam failed: %w", err)
-	}
-
-	return pmgQuarantineSpamFromOutput(out)
-}
-
-func pmgQuarantineSpamFromOutput(out []byte) ([]quarantineSpamMessage, error) {
-	var messages []quarantineSpamMessage
-	if err := decodePMGJSONArray(out, &messages); err != nil {
-		return nil, fmt.Errorf("parse pmgsh quarantine spam output: %w", err)
-	}
-
-	return messages, nil
+	return pmg.QuarantineSpam(ctx)
 }
 
 func compileFieldPatterns(action string, patterns FieldPatterns) (compiledFieldPatterns, error) {
@@ -241,22 +209,9 @@ func quarantineMessageFieldString(message quarantineSpamMessage, field string) (
 }
 
 func pmgApplyQuarantineActionContext(ctx context.Context, id string, action quarantineAction) error {
-	pmgshCmd, cancel, err := cmd.NewContext(
-		ctx,
-		"pmgsh",
-		[]string{"create", "/quarantine/content", "--id", id, "--action", string(action)},
-	)
+	out, err := pmg.ApplyQuarantineAction(ctx, id, string(action))
 	if err != nil {
-		return fmt.Errorf("create pmgsh quarantine action command: %w", err)
-	}
-	defer cancel()
-
-	out, err := pmgshCmd.Run()
-	if err != nil {
-		if strings.TrimSpace(string(out)) != "" {
-			return fmt.Errorf("pmgsh quarantine %s %q failed: %w: %s", action, id, err, strings.TrimSpace(string(out)))
-		}
-		return fmt.Errorf("pmgsh quarantine %s %q failed: %w", action, id, err)
+		return err
 	}
 	slog.Debug("PMG quarantine action response received", "id", id, "action", action, "response", strings.TrimSpace(string(out)))
 

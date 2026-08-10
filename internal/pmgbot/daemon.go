@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-var (
-	quarantineSpamContext        = pmgQuarantineSpamContext
-	applyQuarantineActionContext = pmgApplyQuarantineActionContext
-)
+type quarantineSpamFunc func(context.Context) ([]quarantineSpamMessage, error)
+type applyQuarantineActionFunc func(context.Context, string, quarantineAction) error
 
 func RunOnce(ctx context.Context, config DaemonConfig) error {
 	if config.Timeout <= 0 {
@@ -22,7 +20,7 @@ func RunOnce(ctx context.Context, config DaemonConfig) error {
 		return err
 	}
 
-	return runDaemonOnce(ctx, config, rules)
+	return runDaemonOnce(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext)
 }
 
 func Check(ctx context.Context, config DaemonConfig) error {
@@ -34,7 +32,7 @@ func Check(ctx context.Context, config DaemonConfig) error {
 		return err
 	}
 
-	return runDaemonCheck(ctx, config, rules)
+	return runDaemonCheck(ctx, config, rules, pmgQuarantineSpamContext)
 }
 
 func Daemon(ctx context.Context, config DaemonConfig) error {
@@ -56,7 +54,7 @@ func Daemon(ctx context.Context, config DaemonConfig) error {
 	)
 
 	for {
-		if err := runDaemonOnce(ctx, config, rules); err != nil {
+		if err := runDaemonOnce(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext); err != nil {
 			slog.Error("pmgbot daemon cycle failed", "error", err)
 		} else {
 			slog.Info("pmgbot daemon cycle completed")
@@ -90,16 +88,19 @@ func runDaemonOnce(
 	ctx context.Context,
 	config DaemonConfig,
 	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
+	applyQuarantineAction applyQuarantineActionFunc,
 ) error {
-	return runDaemonCycle(ctx, config, rules, false)
+	return runDaemonCycle(ctx, config, rules, false, quarantineSpam, applyQuarantineAction)
 }
 
 func runDaemonCheck(
 	ctx context.Context,
 	config DaemonConfig,
 	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
 ) error {
-	return runDaemonCycle(ctx, config, rules, true)
+	return runDaemonCycle(ctx, config, rules, true, quarantineSpam, nil)
 }
 
 func runDaemonCycle(
@@ -107,9 +108,11 @@ func runDaemonCycle(
 	config DaemonConfig,
 	rules []compiledRule,
 	dryRun bool,
+	quarantineSpam quarantineSpamFunc,
+	applyQuarantineAction applyQuarantineActionFunc,
 ) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, config.Timeout)
-	messages, err := quarantineSpamContext(cycleCtx)
+	messages, err := quarantineSpam(cycleCtx)
 	cancel()
 	if err != nil {
 		return err
@@ -156,7 +159,7 @@ func runDaemonCycle(
 		}
 
 		actionCtx, cancel := context.WithTimeout(ctx, config.Timeout)
-		err = applyQuarantineActionContext(actionCtx, id, action)
+		err = applyQuarantineAction(actionCtx, id, action)
 		cancel()
 		if err != nil {
 			actionErrors = append(actionErrors, err)
@@ -169,7 +172,19 @@ func runDaemonCycle(
 		} else {
 			deleted++
 		}
-		slog.Info("quarantine spam action applied", "id", id, "action", action, "rule", ruleName)
+		slog.Info(
+			"quarantine spam action applied",
+			"id",
+			id,
+			"action",
+			action,
+			"rule",
+			ruleName,
+			"envelope_sender", message.EnvelopeSender,
+			"from", message.From,
+			"receiver", message.Receiver,
+			"subject", message.Subject,
+		)
 	}
 	if dryRun {
 		slog.Info("daemon quarantine spam checked", "deliver", delivered, "delete", deleted, "skipped", skipped, "errors", len(actionErrors))

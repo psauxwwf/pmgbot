@@ -10,4 +10,4 @@
 - Added PMG quarantine actions through `pmgsh create /quarantine/content --id <id> --action deliver|delete`.
 - Added rule groups so multiple fields inside one `deliver` or `delete` rule are matched with AND.
 - Replaced top-level `deliver`/`delete` rule sections with ordered `rules` containing `name`, `action`, and `when`.
-- Added `pmgbot analyze --config <file>` to count repeated spam `envelope_sender` and `subject` pairs.
+- Added `pmgbot analyze --config <file>` to count repeated spam subjects and show sender counts inside each subject.

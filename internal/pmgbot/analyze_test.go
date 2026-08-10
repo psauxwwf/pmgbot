@@ -3,31 +3,44 @@ package pmgbot
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestAnalyzeSpamMessagesCountsSenderAndSubject(t *testing.T) {
+func TestAnalyzeSpamMessagesGroupsBySubject(t *testing.T) {
 	rows := analyzeSpamMessages([]quarantineSpamMessage{
 		{EnvelopeSender: "b@example.com", Subject: "Same"},
 		{EnvelopeSender: "a@example.com", Subject: "Same"},
 		{EnvelopeSender: "b@example.com", Subject: "Other"},
 		{EnvelopeSender: "b@example.com", Subject: "Same"},
+		{EnvelopeSender: "a@example.com", Subject: "Other"},
+		{EnvelopeSender: "a@example.com", Subject: "Other"},
+		{EnvelopeSender: "c@example.com", Subject: "Same"},
 	})
 
 	want := []spamAnalysisRow{
-		{EnvelopeSender: "b@example.com", Subject: "Same", Count: 2},
-		{EnvelopeSender: "a@example.com", Subject: "Same", Count: 1},
-		{EnvelopeSender: "b@example.com", Subject: "Other", Count: 1},
+		{
+			Subject: "Same",
+			Count:   4,
+			Senders: []spamAnalysisSenderRow{
+				{EnvelopeSender: "b@example.com", Count: 2},
+				{EnvelopeSender: "a@example.com", Count: 1},
+				{EnvelopeSender: "c@example.com", Count: 1},
+			},
+		},
+		{
+			Subject: "Other",
+			Count:   3,
+			Senders: []spamAnalysisSenderRow{
+				{EnvelopeSender: "a@example.com", Count: 2},
+				{EnvelopeSender: "b@example.com", Count: 1},
+			},
+		},
 	}
-	if len(rows) != len(want) {
+	if !reflect.DeepEqual(rows, want) {
 		t.Fatalf("got rows %#v, want %#v", rows, want)
-	}
-	for i := range want {
-		if rows[i] != want[i] {
-			t.Fatalf("got rows %#v, want %#v", rows, want)
-		}
 	}
 }
 
@@ -37,13 +50,23 @@ func TestAnalyzeWritesRows(t *testing.T) {
 		return []quarantineSpamMessage{
 			{EnvelopeSender: "sender@example.com", Subject: "Subject"},
 			{EnvelopeSender: "sender@example.com", Subject: "Subject"},
+			{EnvelopeSender: "other@example.com", Subject: "Subject"},
+			{EnvelopeSender: "other@example.com", Subject: "Other"},
 		}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if strings.TrimSpace(out.String()) != "sender@example.com - Subject - 2" {
+	want := strings.Join([]string{
+		"Subject - 3",
+		"sender@example.com - 2",
+		"other@example.com - 1",
+		"---",
+		"Other - 1",
+		"other@example.com - 1",
+	}, "\n")
+	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())
 	}
 }

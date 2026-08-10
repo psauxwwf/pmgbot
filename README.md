@@ -38,7 +38,7 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
-Analyze repeated spam sender and subject pairs:
+Analyze repeated spam subjects and their senders:
 
 ```bash
 pmgbot analyze --config pmgbot.yaml
@@ -47,7 +47,11 @@ pmgbot analyze --config pmgbot.yaml
 Output format:
 
 ```text
-envelope_sender - subject - count
+subject - count
+envelope_sender - count
+---
+next subject - count
+next envelope_sender - count
 ```
 
 Run continuously as a daemon:

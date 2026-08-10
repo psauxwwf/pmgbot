@@ -8,14 +8,14 @@ import (
 )
 
 type spamAnalysisRow struct {
-	EnvelopeSender string
-	Subject        string
-	Count          int
+	Subject string
+	Count   int
+	Senders []spamAnalysisSenderRow
 }
 
-type spamAnalysisKey struct {
+type spamAnalysisSenderRow struct {
 	EnvelopeSender string
-	Subject        string
+	Count          int
 }
 
 func Analyze(ctx context.Context, config DaemonConfig, output io.Writer) error {
@@ -34,9 +34,20 @@ func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarant
 		return err
 	}
 
-	for _, row := range analyzeSpamMessages(messages) {
-		if _, err := fmt.Fprintf(output, "%s - %s - %d\n", row.EnvelopeSender, row.Subject, row.Count); err != nil {
+	rows := analyzeSpamMessages(messages)
+	for i, row := range rows {
+		if _, err := fmt.Fprintf(output, "%s - %d\n", row.Subject, row.Count); err != nil {
 			return fmt.Errorf("write spam analysis: %w", err)
+		}
+		for _, sender := range row.Senders {
+			if _, err := fmt.Fprintf(output, "%s - %d\n", sender.EnvelopeSender, sender.Count); err != nil {
+				return fmt.Errorf("write spam analysis: %w", err)
+			}
+		}
+		if i < len(rows)-1 {
+			if _, err := fmt.Fprintln(output, "---"); err != nil {
+				return fmt.Errorf("write spam analysis: %w", err)
+			}
 		}
 	}
 
@@ -44,29 +55,36 @@ func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarant
 }
 
 func analyzeSpamMessages(messages []quarantineSpamMessage) []spamAnalysisRow {
-	counts := make(map[spamAnalysisKey]int)
+	countsBySubject := make(map[string]map[string]int)
 	for _, message := range messages {
-		key := spamAnalysisKey{
-			EnvelopeSender: message.EnvelopeSender,
-			Subject:        message.Subject,
+		if countsBySubject[message.Subject] == nil {
+			countsBySubject[message.Subject] = make(map[string]int)
 		}
-		counts[key]++
+		countsBySubject[message.Subject][message.EnvelopeSender]++
 	}
 
-	rows := make([]spamAnalysisRow, 0, len(counts))
-	for key, count := range counts {
-		rows = append(rows, spamAnalysisRow{
-			EnvelopeSender: key.EnvelopeSender,
-			Subject:        key.Subject,
-			Count:          count,
+	rows := make([]spamAnalysisRow, 0, len(countsBySubject))
+	for subject, senderCounts := range countsBySubject {
+		row := spamAnalysisRow{Subject: subject}
+		for sender, count := range senderCounts {
+			row.Count += count
+			row.Senders = append(row.Senders, spamAnalysisSenderRow{
+				EnvelopeSender: sender,
+				Count:          count,
+			})
+		}
+		sort.Slice(row.Senders, func(i, j int) bool {
+			if row.Senders[i].Count != row.Senders[j].Count {
+				return row.Senders[i].Count > row.Senders[j].Count
+			}
+
+			return row.Senders[i].EnvelopeSender < row.Senders[j].EnvelopeSender
 		})
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Count != rows[j].Count {
 			return rows[i].Count > rows[j].Count
-		}
-		if rows[i].EnvelopeSender != rows[j].EnvelopeSender {
-			return rows[i].EnvelopeSender < rows[j].EnvelopeSender
 		}
 
 		return rows[i].Subject < rows[j].Subject

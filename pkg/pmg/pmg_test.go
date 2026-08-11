@@ -1,6 +1,38 @@
 package pmg
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+	"time"
+)
+
+func TestQuarantineSpamArgsUsesThirtyDayWindow(t *testing.T) {
+	now := time.Unix(1785764932, 0)
+	args := quarantineSpamArgs(now)
+
+	if len(args) != 6 {
+		t.Fatalf("got args %#v, want 6 args", args)
+	}
+	if args[0] != "get" || args[1] != "/quarantine/spam" || args[2] != "--starttime" || args[4] != "--endtime" {
+		t.Fatalf("got args %#v", args)
+	}
+
+	starttime, err := strconv.ParseInt(args[3], 10, 64)
+	if err != nil {
+		t.Fatalf("parse starttime: %v", err)
+	}
+	endtime, err := strconv.ParseInt(args[5], 10, 64)
+	if err != nil {
+		t.Fatalf("parse endtime: %v", err)
+	}
+
+	if starttime != now.AddDate(0, 0, -quarantineSpamLookbackDays).Unix() {
+		t.Fatalf("got starttime %d", starttime)
+	}
+	if endtime != now.Unix() {
+		t.Fatalf("got endtime %d", endtime)
+	}
+}
 
 func TestQuarantineSpamFromOutput(t *testing.T) {
 	out := []byte(`[

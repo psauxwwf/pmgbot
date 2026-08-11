@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"pmgbot/pkg/cmd"
 )
+
+const quarantineSpamLookbackDays = 30
 
 type SpamMessage struct {
 	Bytes          int64  `json:"bytes"`
@@ -21,7 +25,7 @@ type SpamMessage struct {
 }
 
 func QuarantineSpam(ctx context.Context) ([]SpamMessage, error) {
-	pmgshCmd, cancel, err := cmd.NewContext(ctx, "pmgsh", []string{"get", "/quarantine/spam"})
+	pmgshCmd, cancel, err := cmd.NewContext(ctx, "pmgsh", quarantineSpamArgs(time.Now()))
 	if err != nil {
 		return nil, fmt.Errorf("create pmgsh quarantine spam command: %w", err)
 	}
@@ -33,6 +37,20 @@ func QuarantineSpam(ctx context.Context) ([]SpamMessage, error) {
 	}
 
 	return quarantineSpamFromOutput(out)
+}
+
+func quarantineSpamArgs(now time.Time) []string {
+	endtime := now.Unix()
+	starttime := now.AddDate(0, 0, -quarantineSpamLookbackDays).Unix()
+
+	return []string{
+		"get",
+		"/quarantine/spam",
+		"--starttime",
+		strconv.FormatInt(starttime, 10),
+		"--endtime",
+		strconv.FormatInt(endtime, 10),
+	}
 }
 
 func ApplyQuarantineAction(ctx context.Context, id string, action string) ([]byte, error) {

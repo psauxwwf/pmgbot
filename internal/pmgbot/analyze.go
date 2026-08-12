@@ -18,11 +18,24 @@ type spamAnalysisSenderRow struct {
 	Count          int
 }
 
-func Analyze(ctx context.Context, config DaemonConfig, output io.Writer) error {
-	return analyze(ctx, config, output, pmgQuarantineSpamContext)
+func Analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer) error {
+	return analyze(ctx, config, minCount, output, pmgQuarantineSpamContext)
 }
 
-func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarantineSpam quarantineSpamFunc) error {
+func AnalyzeSpamJSON(_ context.Context, config DaemonConfig, path string, minCount int, output io.Writer) error {
+	if config.Timeout <= 0 {
+		return fmt.Errorf("daemon timeout must be greater than zero")
+	}
+
+	messages, err := readSpamMessagesJSON(path)
+	if err != nil {
+		return err
+	}
+
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount))
+}
+
+func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer, quarantineSpam quarantineSpamFunc) error {
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
@@ -34,7 +47,10 @@ func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarant
 		return err
 	}
 
-	rows := analyzeSpamMessages(messages)
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount))
+}
+
+func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
 	for i, row := range rows {
 		if _, err := fmt.Fprintf(output, "%s - %d\n", row.Subject, row.Count); err != nil {
 			return fmt.Errorf("write spam analysis: %w", err)
@@ -54,7 +70,11 @@ func analyze(ctx context.Context, config DaemonConfig, output io.Writer, quarant
 	return nil
 }
 
-func analyzeSpamMessages(messages []quarantineSpamMessage) []spamAnalysisRow {
+func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamAnalysisRow {
+	if minCount <= 0 {
+		minCount = 1
+	}
+
 	countsBySubject := make(map[string]map[string]int)
 	for _, message := range messages {
 		if countsBySubject[message.Subject] == nil {
@@ -72,6 +92,9 @@ func analyzeSpamMessages(messages []quarantineSpamMessage) []spamAnalysisRow {
 				EnvelopeSender: sender,
 				Count:          count,
 			})
+		}
+		if row.Count < minCount {
+			continue
 		}
 		sort.Slice(row.Senders, func(i, j int) bool {
 			if row.Senders[i].Count != row.Senders[j].Count {

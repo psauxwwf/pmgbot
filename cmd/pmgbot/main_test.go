@@ -23,7 +23,7 @@ func TestRootCommandsAndFlags(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"run", "check", "analyze", "daemon"} {
+	for _, name := range []string{"run", "check", "analyze", "generate", "daemon"} {
 		cmd, _, err := root.Find([]string{name})
 		if err != nil {
 			t.Fatal(err)
@@ -189,10 +189,13 @@ func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 	t.Cleanup(func() { runAnalyze = originalRunAnalyze })
 
 	var called bool
-	runAnalyze = func(_ context.Context, config pmgbot.DaemonConfig, output io.Writer) error {
+	runAnalyze = func(_ context.Context, config pmgbot.DaemonConfig, minCount int, output io.Writer) error {
 		called = true
 		if config.Timeout != defaultDaemonTimeout {
 			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
+		}
+		if minCount != 3 {
+			t.Fatalf("got min count %d, want 3", minCount)
 		}
 		_, err := io.WriteString(output, "sender@example.com - Subject - 2\n")
 		return err
@@ -205,7 +208,7 @@ func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 
 	var out bytes.Buffer
 	root := rootCmd()
-	root.SetArgs([]string{"--config", configPath, "analyze"})
+	root.SetArgs([]string{"--config", configPath, "analyze", "--min-count", "3"})
 	root.SetOut(&out)
 	root.SetErr(io.Discard)
 	if err := root.ExecuteContext(context.Background()); err != nil {
@@ -215,6 +218,150 @@ func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 		t.Fatal("expected analyze command to run spam analysis")
 	}
 	if !strings.Contains(out.String(), "sender@example.com - Subject - 2") {
+		t.Fatalf("got output %q", out.String())
+	}
+}
+
+func TestAnalyzeCommandRunsSpamJSONAnalysis(t *testing.T) {
+	originalRunAnalyze := runAnalyze
+	originalRunAnalyzeJSON := runAnalyzeJSON
+	t.Cleanup(func() {
+		runAnalyze = originalRunAnalyze
+		runAnalyzeJSON = originalRunAnalyzeJSON
+	})
+
+	runAnalyze = func(context.Context, pmgbot.DaemonConfig, int, io.Writer) error {
+		t.Fatal("analyze --json must not call pmgsh analyze")
+		return nil
+	}
+
+	var called bool
+	runAnalyzeJSON = func(_ context.Context, config pmgbot.DaemonConfig, path string, minCount int, output io.Writer) error {
+		called = true
+		if config.Timeout != defaultDaemonTimeout {
+			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
+		}
+		if path != "spam.json" {
+			t.Fatalf("got json path %q, want spam.json", path)
+		}
+		if minCount != 4 {
+			t.Fatalf("got min count %d, want 4", minCount)
+		}
+		_, err := io.WriteString(output, "Subject - 2\n")
+		return err
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "analyze", "--json", "spam.json", "--min-count", "4"})
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected analyze --json command to run json analysis")
+	}
+	if !strings.Contains(out.String(), "Subject - 2") {
+		t.Fatalf("got output %q", out.String())
+	}
+}
+
+func TestGenerateCommandRunsJSONGenerator(t *testing.T) {
+	originalGenerate := runGenerate
+	originalGenerateJSON := runGenerateJSON
+	t.Cleanup(func() {
+		runGenerate = originalGenerate
+		runGenerateJSON = originalGenerateJSON
+	})
+
+	runGenerate = func(context.Context, pmgbot.DaemonConfig, pmgbot.RuleGenerationConfig, io.Writer) error {
+		t.Fatal("generate --json must not call pmgsh generator")
+		return nil
+	}
+
+	var called bool
+	runGenerateJSON = func(path string, config pmgbot.RuleGenerationConfig, output io.Writer) error {
+		called = true
+		if path != "spam.json" {
+			t.Fatalf("got json path %q, want spam.json", path)
+		}
+		if config.Action != "deliver" || config.MinCount != 3 {
+			t.Fatalf("got config %#v", config)
+		}
+		_, err := io.WriteString(output, "rules:\n")
+		return err
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "generate", "--json", "spam.json", "--action", "deliver", "--min-count", "3"})
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected generate command to run generator")
+	}
+	if !strings.Contains(out.String(), "rules:") {
+		t.Fatalf("got output %q", out.String())
+	}
+}
+
+func TestGenerateCommandRunsPMGGenerator(t *testing.T) {
+	originalGenerate := runGenerate
+	originalGenerateJSON := runGenerateJSON
+	t.Cleanup(func() {
+		runGenerate = originalGenerate
+		runGenerateJSON = originalGenerateJSON
+	})
+
+	runGenerateJSON = func(string, pmgbot.RuleGenerationConfig, io.Writer) error {
+		t.Fatal("generate without --json must not call json generator")
+		return nil
+	}
+
+	var called bool
+	runGenerate = func(_ context.Context, config pmgbot.DaemonConfig, ruleConfig pmgbot.RuleGenerationConfig, output io.Writer) error {
+		called = true
+		if config.Timeout != defaultDaemonTimeout {
+			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
+		}
+		if ruleConfig.Action != "deliver" || ruleConfig.MinCount != 4 {
+			t.Fatalf("got rule config %#v", ruleConfig)
+		}
+		_, err := io.WriteString(output, "rules:\n")
+		return err
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "generate", "--action", "deliver", "--min-count", "4"})
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected generate command to run pmg generator")
+	}
+	if !strings.Contains(out.String(), "rules:") {
 		t.Fatalf("got output %q", out.String())
 	}
 }

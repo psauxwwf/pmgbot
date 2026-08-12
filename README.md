@@ -38,11 +38,39 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
-Analyze repeated spam subjects and their senders:
+Analyze current PMG spam subjects and their senders:
 
 ```bash
 pmgbot analyze --config pmgbot.yaml
 ```
+
+Only show subjects with at least 20 total messages across all senders:
+
+```bash
+pmgbot analyze --config pmgbot.yaml --min-count 20
+```
+
+Analyze a saved PMG spam JSON dump instead of calling `pmgsh`:
+
+```bash
+pmgbot analyze --config pmgbot.yaml --json spam.json
+```
+
+Generate candidate delete rules from current PMG spam quarantine:
+
+```bash
+pmgbot generate --config pmgbot.yaml
+```
+
+Generate candidate rules from a saved PMG spam JSON dump instead of calling `pmgsh`:
+
+```bash
+pmgbot generate --config pmgbot.yaml --json spam.json
+```
+
+Without `--json`, `analyze` and `generate` fetch the current spam quarantine through `pmgsh` using the configured timeout and `sudo` setting. With `--json`, they read a saved PMG spam dump from disk instead. For both commands, `--min-count` is based on the total number of messages with the same subject, summed across all senders.
+
+The generator does not edit `pmgbot.yaml`. It prints a `rules:` YAML fragment for review. By default it creates one exact-match rule per subject seen at least twice, then adds all senders for that subject under `envelope_sender` or `from` as OR patterns. Use `--min-count` and `--action` to tune the output.
 
 Output format:
 

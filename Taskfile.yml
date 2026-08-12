@@ -52,32 +52,18 @@ tasks:
       - go fix ./...
       - go test ./...
 
-  test:analyze-smoke:
+  test:analyze:
     desc: run analyze command with spam.json
     silent: true
     preconditions:
       - test -f spam.json
     cmds:
-      - |
-        tmpdir="$(mktemp -d)"
-        trap 'rm -rf "$tmpdir"' EXIT
-        cat > "$tmpdir/pmgsh" <<'EOF'
-        #!/bin/sh
-        if [ "$1" = "get" ] && [ "$2" = "/quarantine/spam" ]; then
-          cat "${PMG_SPAM_JSON:?}"
-          exit 0
-        fi
+      - go run ./cmd/pmgbot analyze --config pmgbot.yaml --json spam.json
 
-        echo "unexpected pmgsh args: $*" >&2
-        exit 1
-        EOF
-        chmod +x "$tmpdir/pmgsh"
-        cat > "$tmpdir/pmgbot.yaml" <<'EOF'
-        log_level: info
-        sudo: false
-        daemon:
-          every: 10m
-          timeout: 1m
-        rules: []
-        EOF
-        PMG_SPAM_JSON="{{.PWD}}/spam.json" PATH="$tmpdir:$PATH" go run ./cmd/pmgbot analyze --config "$tmpdir/pmgbot.yaml"
+  test:generate:
+    desc: run generate command with spam.json
+    silent: true
+    preconditions:
+      - test -f spam.json
+    cmds:
+      - go run ./cmd/pmgbot generate --config pmgbot.yaml --json spam.json

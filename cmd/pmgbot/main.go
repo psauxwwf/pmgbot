@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/fang"
@@ -28,11 +29,25 @@ type cliConfig struct {
 	SaveConfig bool
 }
 
+type generateRulesOptions struct {
+	JSONPath string
+	Action   string
+	MinCount int
+}
+
+type analyzeOptions struct {
+	JSONPath string
+	MinCount int
+}
+
 var (
-	runOnce    = pmgbot.RunOnce
-	runCheck   = pmgbot.Check
-	runDaemon  = pmgbot.Daemon
-	runAnalyze = pmgbot.Analyze
+	runOnce         = pmgbot.RunOnce
+	runCheck        = pmgbot.Check
+	runDaemon       = pmgbot.Daemon
+	runAnalyze      = pmgbot.Analyze
+	runAnalyzeJSON  = pmgbot.AnalyzeSpamJSON
+	runGenerate     = pmgbot.GenerateRules
+	runGenerateJSON = pmgbot.GenerateRulesFromSpamJSON
 )
 
 func main() {
@@ -76,7 +91,7 @@ func rootCmd() *cobra.Command {
 		"save default yaml config and exit",
 	)
 
-	root.AddCommand(runCmd(&config), checkCmd(&config), analyzeCmd(&config), daemonCmd(&config))
+	root.AddCommand(runCmd(&config), checkCmd(&config), analyzeCmd(&config), generateRulesCmd(&config), daemonCmd(&config))
 
 	return root
 }
@@ -120,6 +135,9 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 }
 
 func analyzeCmd(logConfig *cliConfig) *cobra.Command {
+	var options analyzeOptions
+	options.MinCount = 1
+
 	analyze := &cobra.Command{
 		Use:           "analyze",
 		Short:         "Analyze PMG spam quarantine sender and subject repeats",
@@ -131,11 +149,39 @@ func analyzeCmd(logConfig *cliConfig) *cobra.Command {
 				return saveDefaultConfig(logConfig.ConfigPath)
 			}
 
-			return runConfiguredAnalyze(cmd.Context(), logConfig.ConfigPath, cmd.OutOrStdout(), runAnalyze)
+			return runConfiguredAnalyze(cmd.Context(), logConfig.ConfigPath, options, cmd.OutOrStdout())
 		},
 	}
+	analyze.Flags().StringVar(&options.JSONPath, "json", "", "path to PMG spam quarantine JSON dump instead of pmgsh")
+	analyze.Flags().IntVar(&options.MinCount, "min-count", options.MinCount, "minimum total message count for a subject")
 
 	return analyze
+}
+
+func generateRulesCmd(logConfig *cliConfig) *cobra.Command {
+	var options generateRulesOptions
+	options.Action = "delete"
+	options.MinCount = 2
+
+	generate := &cobra.Command{
+		Use:           "generate",
+		Short:         "Generate candidate yaml rules from PMG spam quarantine",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if logConfig.SaveConfig {
+				return saveDefaultConfig(logConfig.ConfigPath)
+			}
+
+			return runConfiguredGenerate(cmd.Context(), logConfig.ConfigPath, options, cmd.OutOrStdout())
+		},
+	}
+	generate.Flags().StringVar(&options.JSONPath, "json", "", "path to PMG spam quarantine JSON dump instead of pmgsh")
+	generate.Flags().StringVar(&options.Action, "action", options.Action, "generated rule action: deliver or delete")
+	generate.Flags().IntVar(&options.MinCount, "min-count", options.MinCount, "minimum total message count for a subject")
+
+	return generate
 }
 
 func daemonCmd(logConfig *cliConfig) *cobra.Command {
@@ -183,8 +229,8 @@ func runConfigured(
 func runConfiguredAnalyze(
 	ctx context.Context,
 	configPath string,
+	options analyzeOptions,
 	output io.Writer,
-	run func(context.Context, pmgbot.DaemonConfig, io.Writer) error,
 ) error {
 	fileConfig, err := pmgbot.LoadFileConfig(configPath)
 	if err != nil {
@@ -196,7 +242,38 @@ func runConfiguredAnalyze(
 		return err
 	}
 
-	return run(ctx, fileConfig.DaemonConfig(), output)
+	if strings.TrimSpace(options.JSONPath) != "" {
+		return runAnalyzeJSON(ctx, fileConfig.DaemonConfig(), options.JSONPath, options.MinCount, output)
+	}
+
+	return runAnalyze(ctx, fileConfig.DaemonConfig(), options.MinCount, output)
+}
+
+func runConfiguredGenerate(
+	ctx context.Context,
+	configPath string,
+	options generateRulesOptions,
+	output io.Writer,
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	if err := configureLogger(fileConfig.LogLevel, fileConfig.LogPath); err != nil {
+		return err
+	}
+
+	ruleConfig := pmgbot.RuleGenerationConfig{
+		Action:   options.Action,
+		MinCount: options.MinCount,
+	}
+	if strings.TrimSpace(options.JSONPath) != "" {
+		return runGenerateJSON(options.JSONPath, ruleConfig, output)
+	}
+
+	return runGenerate(ctx, fileConfig.DaemonConfig(), ruleConfig, output)
 }
 
 func defaultFileConfig(_ time.Time) pmgbot.FileConfig {

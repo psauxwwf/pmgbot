@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,7 +48,25 @@ func TestRootCommandsAndFlags(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"config", "save-config"} {
+	if root.PersistentFlags().Lookup("config") == nil {
+		t.Fatal("config flag not found")
+	}
+	if root.PersistentFlags().Lookup("save-config") != nil {
+		t.Fatal("save-config must not be a persistent flag")
+	}
+	if root.Flags().Lookup("save-config") == nil {
+		t.Fatal("save-config root flag not found")
+	}
+	for _, name := range []string{"run", "check", "analyze", "generate", "daemon"} {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cmd.Flag("save-config") != nil {
+			t.Fatalf("save-config must not be available for %s", name)
+		}
+	}
+	for _, name := range []string{"config"} {
 		if root.PersistentFlags().Lookup(name) == nil {
 			t.Fatalf("config flag %q not found", name)
 		}
@@ -63,6 +82,28 @@ func TestConfigDefaultPath(t *testing.T) {
 	}
 	if flag.DefValue != defaultConfigPath {
 		t.Fatalf("got %q, want %q", flag.DefValue, defaultConfigPath)
+	}
+}
+
+func TestDefaultExistingConfigPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	if got := defaultExistingConfigPath(); got != defaultConfigPath {
+		t.Fatalf("got %q, want %q", got, defaultConfigPath)
+	}
+
+	if err := os.WriteFile(overrideConfigPath, []byte("rules: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultExistingConfigPath(); got != overrideConfigPath {
+		t.Fatalf("got %q, want %q", got, overrideConfigPath)
+	}
+
+	if err := os.WriteFile(defaultConfigPath, []byte("rules: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultExistingConfigPath(); got != defaultConfigPath {
+		t.Fatalf("got %q, want %q", got, defaultConfigPath)
 	}
 }
 
@@ -144,6 +185,38 @@ func TestRunCommandRunsOneCycle(t *testing.T) {
 
 	root := rootCmd()
 	root.SetArgs([]string{"--config", configPath, "run"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected run command to run one cycle")
+	}
+}
+
+func TestRunCommandUsesOverrideConfigWhenDefaultMissing(t *testing.T) {
+	originalRunOnce := runOnce
+	t.Cleanup(func() { runOnce = originalRunOnce })
+	t.Chdir(t.TempDir())
+
+	config := defaultFileConfig(time.Now())
+	config.Daemon.Timeout = pmgbot.Duration(7 * time.Minute)
+	if err := pmgbot.SaveFileConfig(overrideConfigPath, config); err != nil {
+		t.Fatal(err)
+	}
+
+	var called bool
+	runOnce = func(_ context.Context, config pmgbot.DaemonConfig) error {
+		called = true
+		if config.Timeout != 7*time.Minute {
+			t.Fatalf("got timeout %s, want 7m0s", config.Timeout)
+		}
+		return nil
+	}
+
+	root := rootCmd()
+	root.SetArgs([]string{"run"})
 	root.SetOut(io.Discard)
 	root.SetErr(io.Discard)
 	if err := root.ExecuteContext(context.Background()); err != nil {

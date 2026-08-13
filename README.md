@@ -2,13 +2,13 @@
 
 `pmgbot` is a daemon for Proxmox Mail Gateway (PMG) spam quarantine automation.
 
-It reads field-based regexp rules from `pmgbot.yaml`, loads spam quarantine entries through `pmgsh`, and automatically delivers or deletes matching messages.
+It reads field-based regexp rules from `pmgbot.yaml` or `pmgbot.override.yaml`, loads spam quarantine entries through `pmgsh`, and automatically delivers or deletes matching messages.
 
 ## How It Works
 
 The daemon runs this cycle:
 
-1. Reads configuration from `pmgbot.yaml`.
+1. Reads configuration from `pmgbot.yaml`, or `pmgbot.override.yaml` if `pmgbot.yaml` does not exist.
 2. Gets current spam quarantine entries:
 
 ```bash
@@ -93,6 +93,8 @@ Create a default config file:
 ```bash
 pmgbot --save-config --config pmgbot.yaml
 ```
+
+`--save-config` belongs only to the root command and is not available on subcommands. Without an explicit `--config`, runtime commands load `pmgbot.yaml` first and fall back to `pmgbot.override.yaml` only when `pmgbot.yaml` is absent.
 
 ## Configuration
 

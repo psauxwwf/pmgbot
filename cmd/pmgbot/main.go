@@ -21,6 +21,7 @@ const (
 	defaultDaemonEvery   = 15 * time.Minute
 	defaultDaemonTimeout = 10 * time.Minute
 	defaultConfigPath    = "pmgbot.yaml"
+	overrideConfigPath   = "pmgbot.override.yaml"
 	defaultLogLevel      = "info"
 )
 
@@ -82,9 +83,9 @@ func rootCmd() *cobra.Command {
 		&config.ConfigPath,
 		"config",
 		defaultConfigPath,
-		"path to yaml config for daemon and --save-config",
+		"path to yaml config",
 	)
-	root.PersistentFlags().BoolVar(
+	root.Flags().BoolVar(
 		&config.SaveConfig,
 		"save-config",
 		false,
@@ -104,11 +105,7 @@ func runCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if logConfig.SaveConfig {
-				return saveDefaultConfig(logConfig.ConfigPath)
-			}
-
-			return runConfigured(cmd.Context(), logConfig.ConfigPath, runOnce)
+			return runConfigured(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), runOnce)
 		},
 	}
 
@@ -123,11 +120,7 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if logConfig.SaveConfig {
-				return saveDefaultConfig(logConfig.ConfigPath)
-			}
-
-			return runConfigured(cmd.Context(), logConfig.ConfigPath, runCheck)
+			return runConfigured(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), runCheck)
 		},
 	}
 
@@ -145,11 +138,7 @@ func analyzeCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if logConfig.SaveConfig {
-				return saveDefaultConfig(logConfig.ConfigPath)
-			}
-
-			return runConfiguredAnalyze(cmd.Context(), logConfig.ConfigPath, options, cmd.OutOrStdout())
+			return runConfiguredAnalyze(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), options, cmd.OutOrStdout())
 		},
 	}
 	analyze.Flags().StringVar(&options.JSONPath, "json", "", "path to PMG spam quarantine JSON dump instead of pmgsh")
@@ -170,11 +159,7 @@ func generateRulesCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if logConfig.SaveConfig {
-				return saveDefaultConfig(logConfig.ConfigPath)
-			}
-
-			return runConfiguredGenerate(cmd.Context(), logConfig.ConfigPath, options, cmd.OutOrStdout())
+			return runConfiguredGenerate(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), options, cmd.OutOrStdout())
 		},
 	}
 	generate.Flags().StringVar(&options.JSONPath, "json", "", "path to PMG spam quarantine JSON dump instead of pmgsh")
@@ -192,11 +177,7 @@ func daemonCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if logConfig.SaveConfig {
-				return saveDefaultConfig(logConfig.ConfigPath)
-			}
-
-			if err := runConfigured(cmd.Context(), logConfig.ConfigPath, runDaemon); err != nil {
+			if err := runConfigured(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), runDaemon); err != nil {
 				slog.Error("pmgbot daemon failed", "error", err)
 				return err
 			}
@@ -206,6 +187,26 @@ func daemonCmd(logConfig *cliConfig) *cobra.Command {
 	}
 
 	return daemon
+}
+
+func commandConfigPath(cmd *cobra.Command, configuredPath string) string {
+	flag := cmd.Root().PersistentFlags().Lookup("config")
+	if flag != nil && flag.Changed {
+		return configuredPath
+	}
+
+	return defaultExistingConfigPath()
+}
+
+func defaultExistingConfigPath() string {
+	if _, err := os.Stat(defaultConfigPath); err == nil || !os.IsNotExist(err) {
+		return defaultConfigPath
+	}
+	if _, err := os.Stat(overrideConfigPath); err == nil || !os.IsNotExist(err) {
+		return overrideConfigPath
+	}
+
+	return defaultConfigPath
 }
 
 func runConfigured(

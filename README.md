@@ -12,7 +12,7 @@ The daemon runs this cycle:
 2. Gets current spam quarantine entries:
 
 ```bash
-pmgsh get /quarantine/spam
+sudo pmgsh get /quarantine/spam --starttime $(date --date='-30 days' +%s) --endtime $(date +%s)
 ```
 
 3. Matches every quarantine message against `rules` from top to bottom.

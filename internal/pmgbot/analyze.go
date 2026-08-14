@@ -5,17 +5,27 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"pmgbot/pkg/lang"
 )
 
 type spamAnalysisRow struct {
-	Subject string
-	Count   int
-	Senders []spamAnalysisSenderRow
+	Subject  string
+	Count    int
+	Script   string
+	Language string
+	Senders  []spamAnalysisSenderRow
 }
 
 type spamAnalysisSenderRow struct {
 	EnvelopeSender string
+	From           string
 	Count          int
+}
+
+type spamAnalysisSenderKey struct {
+	EnvelopeSender string
+	From           string
 }
 
 func Analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer) error {
@@ -52,11 +62,11 @@ func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.W
 
 func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
 	for i, row := range rows {
-		if _, err := fmt.Fprintf(output, "%s - %d\n", row.Subject, row.Count); err != nil {
+		if _, err := fmt.Fprintf(output, "%s - %d - %s - %s\n", row.Subject, row.Count, row.Script, row.Language); err != nil {
 			return fmt.Errorf("write spam analysis: %w", err)
 		}
 		for _, sender := range row.Senders {
-			if _, err := fmt.Fprintf(output, "%s - %d\n", sender.EnvelopeSender, sender.Count); err != nil {
+			if _, err := fmt.Fprintf(output, "%s - %s - %d\n", sender.EnvelopeSender, sender.From, sender.Count); err != nil {
 				return fmt.Errorf("write spam analysis: %w", err)
 			}
 		}
@@ -75,21 +85,30 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 		minCount = 1
 	}
 
-	countsBySubject := make(map[string]map[string]int)
+	countsBySubject := make(map[string]map[spamAnalysisSenderKey]int)
 	for _, message := range messages {
 		if countsBySubject[message.Subject] == nil {
-			countsBySubject[message.Subject] = make(map[string]int)
+			countsBySubject[message.Subject] = make(map[spamAnalysisSenderKey]int)
 		}
-		countsBySubject[message.Subject][message.EnvelopeSender]++
+		key := spamAnalysisSenderKey{
+			EnvelopeSender: message.EnvelopeSender,
+			From:           message.From,
+		}
+		countsBySubject[message.Subject][key]++
 	}
 
 	rows := make([]spamAnalysisRow, 0, len(countsBySubject))
 	for subject, senderCounts := range countsBySubject {
-		row := spamAnalysisRow{Subject: subject}
+		row := spamAnalysisRow{
+			Subject:  subject,
+			Script:   lang.SubjectScript(subject),
+			Language: lang.SubjectLanguage(subject),
+		}
 		for sender, count := range senderCounts {
 			row.Count += count
 			row.Senders = append(row.Senders, spamAnalysisSenderRow{
-				EnvelopeSender: sender,
+				EnvelopeSender: sender.EnvelopeSender,
+				From:           sender.From,
 				Count:          count,
 			})
 		}
@@ -100,8 +119,11 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 			if row.Senders[i].Count != row.Senders[j].Count {
 				return row.Senders[i].Count > row.Senders[j].Count
 			}
+			if row.Senders[i].EnvelopeSender != row.Senders[j].EnvelopeSender {
+				return row.Senders[i].EnvelopeSender < row.Senders[j].EnvelopeSender
+			}
 
-			return row.Senders[i].EnvelopeSender < row.Senders[j].EnvelopeSender
+			return row.Senders[i].From < row.Senders[j].From
 		})
 		rows = append(rows, row)
 	}

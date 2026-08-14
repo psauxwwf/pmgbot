@@ -12,3 +12,4 @@
 - Replaced top-level `deliver`/`delete` rule sections with ordered `rules` containing `name`, `action`, and `when`.
 - Added `pmgbot analyze --config <file>` to count repeated spam subjects and show sender counts inside each subject.
 - Added `--min-count` for `analyze` to filter subjects by their total message count across all senders.
+- Added `[!]` regexp inversion for individual rule patterns, for example `subject: '[!]Mail Delivery'`.

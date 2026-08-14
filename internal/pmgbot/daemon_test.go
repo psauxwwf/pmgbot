@@ -128,15 +128,15 @@ func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
 			Name:   "Deliver important",
 			Action: quarantineActionDeliver,
 			When: compiledRuleGroups{{
-				"subject": {regexp.MustCompile(`Important`)},
+				"subject": {{Regexp: regexp.MustCompile(`Important`)}},
 			}},
 		},
 		{
 			Name:   "Delete spam",
 			Action: quarantineActionDelete,
 			When: compiledRuleGroups{
-				{"subject": {regexp.MustCompile(`Lottery|Casino`)}},
-				{"envelope_sender": {regexp.MustCompile(`bad@example\.com`)}},
+				{"subject": {{Regexp: regexp.MustCompile(`Lottery|Casino`)}}},
+				{"envelope_sender": {{Regexp: regexp.MustCompile(`bad@example\.com`)}}},
 			},
 		},
 	}

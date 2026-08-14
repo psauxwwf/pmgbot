@@ -8,12 +8,18 @@ import (
 	"slices"
 	"strings"
 
+	"pmgbot/pkg/lang"
 	"pmgbot/pkg/pmg"
 )
 
 type quarantineSpamMessage = pmg.SpamMessage
 
-type compiledFieldPatterns map[string][]*regexp.Regexp
+type compiledPattern struct {
+	Regexp   *regexp.Regexp
+	Inverted bool
+}
+
+type compiledFieldPatterns map[string][]compiledPattern
 type compiledRuleGroups []compiledFieldPatterns
 
 type compiledRule struct {
@@ -27,6 +33,7 @@ type quarantineAction string
 const (
 	quarantineActionDeliver quarantineAction = "deliver"
 	quarantineActionDelete  quarantineAction = "delete"
+	invertedPatternPrefix   string           = "[!]"
 )
 
 var quarantineActions = []quarantineAction{
@@ -59,17 +66,30 @@ func compileFieldPatterns(action string, patterns FieldPatterns) (compiledFieldP
 				continue
 			}
 
-			re, err := regexp.Compile(pattern)
+			patternText, inverted := patternRegexp(pattern)
+			if patternText == "" {
+				continue
+			}
+
+			re, err := regexp.Compile(patternText)
 			if err != nil {
 				return nil, fmt.Errorf("compile %s pattern for field %q %q: %w", action, field, pattern, err)
 			}
 
 			seen = append(seen, pattern)
-			compiled[field] = append(compiled[field], re)
+			compiled[field] = append(compiled[field], compiledPattern{Regexp: re, Inverted: inverted})
 		}
 	}
 
 	return compiled, nil
+}
+
+func patternRegexp(pattern string) (string, bool) {
+	if !strings.HasPrefix(pattern, invertedPatternPrefix) {
+		return pattern, false
+	}
+
+	return strings.TrimSpace(strings.TrimPrefix(pattern, invertedPatternPrefix)), true
 }
 
 func compileRuleGroups(action string, groups RuleGroups) (compiledRuleGroups, error) {
@@ -153,7 +173,7 @@ func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFiel
 
 		var matched bool
 		for _, pattern := range fieldPatterns {
-			if pattern.MatchString(text) {
+			if pattern.Matches(text) {
 				matched = true
 				break
 			}
@@ -164,6 +184,15 @@ func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFiel
 	}
 
 	return true
+}
+
+func (pattern compiledPattern) Matches(text string) bool {
+	matched := pattern.Regexp.MatchString(text)
+	if pattern.Inverted {
+		return !matched
+	}
+
+	return matched
 }
 
 func decideQuarantineAction(
@@ -203,6 +232,10 @@ func quarantineMessageFieldString(message quarantineSpamMessage, field string) (
 		return message.Receiver, true
 	case "subject":
 		return message.Subject, true
+	case "subject_script":
+		return lang.SubjectScript(message.Subject), true
+	case "subject_language":
+		return lang.SubjectLanguage(message.Subject), true
 	default:
 		return "", false
 	}

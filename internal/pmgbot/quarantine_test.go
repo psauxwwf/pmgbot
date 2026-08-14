@@ -15,6 +15,16 @@ func TestCompileFieldPatternsReturnsRegexError(t *testing.T) {
 	}
 }
 
+func TestCompileFieldPatternsReturnsRegexErrorForInvertedPattern(t *testing.T) {
+	_, err := compileFieldPatterns("delete", FieldPatterns{"subject": {"[!]["}})
+	if err == nil {
+		t.Fatal("expected regexp error")
+	}
+	if !strings.Contains(err.Error(), `compile delete pattern for field "subject" "[!]["`) {
+		t.Fatalf("got error %q", err)
+	}
+}
+
 func TestCompileFieldPatternsReturnsUnknownFieldError(t *testing.T) {
 	_, err := compileFieldPatterns("delete", FieldPatterns{"sender": {`.*`}})
 	if err == nil {
@@ -48,6 +58,22 @@ func TestCompileFieldPatternsIgnoresEmptyFields(t *testing.T) {
 	}
 	if len(compiled) != 0 {
 		t.Fatalf("got compiled patterns %#v, want empty", compiled)
+	}
+}
+
+func TestCompileFieldPatternsAcceptsComputedSubjectFields(t *testing.T) {
+	compiled, err := compileFieldPatterns("delete", FieldPatterns{
+		"subject_script":   {`^latin$`},
+		"subject_language": {`^en$`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled["subject_script"]) != 1 {
+		t.Fatalf("got %d subject_script patterns, want 1", len(compiled["subject_script"]))
+	}
+	if len(compiled["subject_language"]) != 1 {
+		t.Fatalf("got %d subject_language patterns, want 1", len(compiled["subject_language"]))
 	}
 }
 
@@ -118,6 +144,83 @@ func TestDecideQuarantineAction(t *testing.T) {
 			got, _, ok := decideQuarantineAction(tt.message, rules)
 			if ok != tt.wantOK || got != tt.want {
 				t.Fatalf("got %q/%v, want %q/%v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestDecideQuarantineActionMatchesComputedSubjectFields(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete latin subject",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{
+					"envelope_sender": {`^spam@example\.com$`},
+					"subject_script":  {`^latin$`},
+				},
+			},
+		},
+		{
+			Name:   "Delete english subject",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{"subject_language": {`^en$`}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		message  quarantineSpamMessage
+		wantOK   bool
+		wantRule string
+	}{
+		{
+			name: "script and sender",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "spam@example.com",
+				Subject:        "[SPAM]: Weekly Air shipment",
+			},
+			wantOK:   true,
+			wantRule: "Delete latin subject",
+		},
+		{
+			name: "language",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "other@example.com",
+				Subject:        "Weekly air shipment documents are ready for review and confirmation",
+			},
+			wantOK:   true,
+			wantRule: "Delete english subject",
+		},
+		{
+			name: "script group requires sender",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "other@example.com",
+				Subject:        "Short latin text",
+			},
+		},
+		{
+			name: "cyrillic does not match",
+			message: quarantineSpamMessage{
+				EnvelopeSender: "spam@example.com",
+				Subject:        "Уведомление о поступлении документов",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ruleName, ok := decideQuarantineAction(tt.message, rules)
+			if ok != tt.wantOK {
+				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
+			}
+			if ruleName != tt.wantRule {
+				t.Fatalf("got rule %q, want %q", ruleName, tt.wantRule)
 			}
 		})
 	}
@@ -240,6 +343,43 @@ func TestDecideQuarantineActionMatchesPatternListAsOr(t *testing.T) {
 			}
 			if ok && (got != quarantineActionDelete || ruleName != "Delete webmaster notifications") {
 				t.Fatalf("got action %q rule %q, want delete rule name", got, ruleName)
+			}
+		})
+	}
+}
+
+func TestDecideQuarantineActionMatchesInvertedPattern(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete English but not delivery notifications",
+			Action: quarantineActionDelete,
+			When: RuleGroups{
+				{
+					"subject_script":   {`^latin$`},
+					"subject_language": {`^en$`},
+					"subject":          {`[!]Mail Delivery`},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		subject string
+		wantOK  bool
+	}{
+		{name: "does not contain excluded text", subject: "Weekly air shipment documents are ready for review", wantOK: true},
+		{name: "contains excluded text", subject: "Mail Delivery Subsystem: Delivery Status Notification"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, ok := decideQuarantineAction(quarantineSpamMessage{Subject: tt.subject}, rules)
+			if ok != tt.wantOK {
+				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
 			}
 		})
 	}

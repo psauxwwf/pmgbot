@@ -38,7 +38,7 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
-Analyze current PMG spam subjects and their senders:
+Analyze current PMG spam subjects, envelope senders, and From headers:
 
 ```bash
 pmgbot analyze --config pmgbot.yaml
@@ -68,18 +68,18 @@ Generate candidate rules from a saved PMG spam JSON dump instead of calling `pmg
 pmgbot generate --config pmgbot.yaml --json spam.json
 ```
 
-Without `--json`, `analyze` and `generate` fetch the current spam quarantine through `pmgsh` using the configured timeout and `sudo` setting. With `--json`, they read a saved PMG spam dump from disk instead. For both commands, `--min-count` is based on the total number of messages with the same subject, summed across all senders.
+Without `--json`, `analyze` and `generate` fetch the current spam quarantine through `pmgsh` using the configured timeout and `sudo` setting. With `--json`, they read a saved PMG spam dump from disk instead. For both commands, `--min-count` is based on the total number of messages with the same subject, summed across all envelope sender and From combinations.
 
 The generator does not edit `pmgbot.yaml`. It prints a `rules:` YAML fragment for review. By default it creates one exact-match rule per subject seen at least twice, then adds all senders for that subject under `envelope_sender` or `from` as OR patterns. Use `--min-count` and `--action` to tune the output.
 
 Output format:
 
 ```text
-subject - count
-envelope_sender - count
+subject - count - script - lang
+envelope_sender - from - count
 ---
-next subject - count
-next envelope_sender - count
+next subject - count - script - lang
+next envelope_sender - next from - count
 ```
 
 Run continuously as a daemon:
@@ -112,6 +112,8 @@ rules:
   # - каждый элемент YAML-списка через "-" задает вариант ИЛИ;
   # - несколько regexp у одного поля тоже задают ИЛИ;
   # - несколько полей внутри одного элемента "-" задают И.
+  # - префикс [!] инвертирует один regexp: '[!]Mail Delivery' = НЕ содержит Mail Delivery.
+  #   Значения с [!] нужно брать в YAML-кавычки.
   # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
 
   # Один field + несколько regexp: subject A ИЛИ subject B.
@@ -177,18 +179,60 @@ rules:
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
 ```
 
-Rule keys must match PMG quarantine JSON field names returned by `/quarantine/spam`:
+Rule keys can use these PMG quarantine JSON text fields returned by `/quarantine/spam`:
 
 - `envelope_sender`
 - `from`
 - `receiver`
 - `subject`
 
-Only these text fields are supported for matching. Numeric fields such as `bytes`, `spamlevel`, and `time` are parsed from PMG but are not available as rule keys.
+Rules can also use computed fields derived from `subject`:
+
+- `subject_script`: dominant subject script, one of `latin`, `cyrillic`, `cjk`, `mixed`, or `unknown`.
+- `subject_language`: detected subject language as a lower-case ISO 639-1 code such as `en`, `ru`, or `es`; returns `unknown` when detection is not reliable.
+
+Numeric PMG fields such as `bytes`, `spamlevel`, and `time` are parsed from PMG but are not available as rule keys.
 
 Unknown rule keys are rejected during config validation.
 
 Matching is case-sensitive by default. Use `(?i)` inside a regexp for case-insensitive matching.
+
+Use `[!]` as the inversion prefix. Prefix a regexp with `[!]` to invert only that pattern. For example, `subject: '[!]Mail Delivery'` matches subjects that do not contain `Mail Delivery` anywhere, because the inner regexp `Mail Delivery` is not anchored. Quote inverted patterns in YAML because they start with `[`.
+
+Inversion is per regexp, not per field or rule. If a field has multiple regexps, they are still alternatives: the field matches when any listed pattern matches, including any inverted pattern whose inner regexp does not match.
+
+For example, delete Latin-script subjects only when they also match the same sender group:
+
+```yaml
+rules:
+  - name: Delete latin spam subjects
+    action: delete
+    when:
+      - envelope_sender: '@example\.com$'
+        subject_script: '^latin$'
+```
+
+Delete reliably detected English subjects:
+
+```yaml
+rules:
+  - name: Delete English subjects
+    action: delete
+    when:
+      - subject_language: '^en$'
+```
+
+Delete English subjects except delivery notifications:
+
+```yaml
+rules:
+  - name: Delete English subjects except delivery notifications
+    action: delete
+    when:
+      - subject_script: '^latin$'
+        subject_language: '^en$'
+        subject: '[!]Mail Delivery'
+```
 
 ## Actions
 
@@ -208,7 +252,15 @@ The `id` is the quarantine API ID returned by `/quarantine/spam`.
 
 ## Regexp Examples
 
-Rule patterns use Go `regexp` syntax, also known as RE2 regular expression syntax. Useful basics: `.*` means any characters, `\.` means a literal dot, `^` means start of string, `$` means end of string, and `(?i)` enables case-insensitive matching.
+Rule patterns use Go `regexp` syntax, also known as RE2 regular expression syntax. Useful basics: `.*` means any characters, `\.` means a literal dot, `^` means start of string, `$` means end of string, and `(?i)` enables case-insensitive matching. The pmgbot-specific inversion prefix is `[!]`; it is not part of Go regexp syntax and is stripped before compiling the regexp.
+
+### Inversion
+
+| What to match                                      | Pattern                           |
+| -------------------------------------------------- | --------------------------------- |
+| Subject does not contain `Mail Delivery`           | `subject: '[!]Mail Delivery'`     |
+| Subject does not start with `Positive Technologies` | `subject: '[!]^Positive Technologies'` |
+| Case-insensitive subject does not contain `invoice` | `subject: '[!](?i)invoice'`       |
 
 ### Sender Domains
 

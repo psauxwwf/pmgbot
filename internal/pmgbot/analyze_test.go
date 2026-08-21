@@ -20,7 +20,7 @@ func TestAnalyzeSpamMessagesGroupsBySubject(t *testing.T) {
 		{EnvelopeSender: "a@example.com", From: "Alpha <a@example.com>", Subject: "Other"},
 		{EnvelopeSender: "a@example.com", From: "Other Alpha <a@example.com>", Subject: "Other"},
 		{EnvelopeSender: "c@example.com", From: "Charlie <c@example.com>", Subject: "Same"},
-	}, 1)
+	}, 1, nil)
 
 	want := []spamAnalysisRow{
 		{
@@ -29,9 +29,9 @@ func TestAnalyzeSpamMessagesGroupsBySubject(t *testing.T) {
 			Script:   "latin",
 			Language: "unknown",
 			Senders: []spamAnalysisSenderRow{
-				{EnvelopeSender: "b@example.com", From: "Beta <b@example.com>", Count: 2},
-				{EnvelopeSender: "a@example.com", From: "Alpha <a@example.com>", Count: 1},
-				{EnvelopeSender: "c@example.com", From: "Charlie <c@example.com>", Count: 1},
+				{EnvelopeSender: "b@example.com", From: "Beta <b@example.com>", Count: 2, Action: "skip"},
+				{EnvelopeSender: "a@example.com", From: "Alpha <a@example.com>", Count: 1, Action: "skip"},
+				{EnvelopeSender: "c@example.com", From: "Charlie <c@example.com>", Count: 1, Action: "skip"},
 			},
 		},
 		{
@@ -40,9 +40,9 @@ func TestAnalyzeSpamMessagesGroupsBySubject(t *testing.T) {
 			Script:   "latin",
 			Language: "en",
 			Senders: []spamAnalysisSenderRow{
-				{EnvelopeSender: "a@example.com", From: "Alpha <a@example.com>", Count: 1},
-				{EnvelopeSender: "a@example.com", From: "Other Alpha <a@example.com>", Count: 1},
-				{EnvelopeSender: "b@example.com", From: "Beta <b@example.com>", Count: 1},
+				{EnvelopeSender: "a@example.com", From: "Alpha <a@example.com>", Count: 1, Action: "skip"},
+				{EnvelopeSender: "a@example.com", From: "Other Alpha <a@example.com>", Count: 1, Action: "skip"},
+				{EnvelopeSender: "b@example.com", From: "Beta <b@example.com>", Count: 1, Action: "skip"},
 			},
 		},
 	}
@@ -58,7 +58,7 @@ func TestAnalyzeSpamMessagesFiltersBySubjectMinCount(t *testing.T) {
 		{EnvelopeSender: "third@example.com", From: "Third <third@example.com>", Subject: "Same"},
 		{EnvelopeSender: "first@example.com", From: "First <first@example.com>", Subject: "Other"},
 		{EnvelopeSender: "second@example.com", From: "Second <second@example.com>", Subject: "Other"},
-	}, 3)
+	}, 3, nil)
 
 	want := []spamAnalysisRow{
 		{
@@ -67,9 +67,9 @@ func TestAnalyzeSpamMessagesFiltersBySubjectMinCount(t *testing.T) {
 			Script:   "latin",
 			Language: "unknown",
 			Senders: []spamAnalysisSenderRow{
-				{EnvelopeSender: "first@example.com", From: "First <first@example.com>", Count: 1},
-				{EnvelopeSender: "second@example.com", From: "Second <second@example.com>", Count: 1},
-				{EnvelopeSender: "third@example.com", From: "Third <third@example.com>", Count: 1},
+				{EnvelopeSender: "first@example.com", From: "First <first@example.com>", Count: 1, Action: "skip"},
+				{EnvelopeSender: "second@example.com", From: "Second <second@example.com>", Count: 1, Action: "skip"},
+				{EnvelopeSender: "third@example.com", From: "Third <third@example.com>", Count: 1, Action: "skip"},
 			},
 		},
 	}
@@ -80,7 +80,21 @@ func TestAnalyzeSpamMessagesFiltersBySubjectMinCount(t *testing.T) {
 
 func TestAnalyzeWritesRows(t *testing.T) {
 	var out bytes.Buffer
-	err := analyze(context.Background(), DaemonConfig{Timeout: time.Minute}, 2, &out, func(context.Context) ([]quarantineSpamMessage, error) {
+	err := analyze(context.Background(), DaemonConfig{
+		Timeout: time.Minute,
+		Rules: Rules{
+			{
+				Name:   "Delete sender",
+				Action: quarantineActionDelete,
+				When:   RuleGroups{{"envelope_sender": {`^sender@example\.com$`}}},
+			},
+			{
+				Name:   "Deliver other",
+				Action: quarantineActionDeliver,
+				When:   RuleGroups{{"envelope_sender": {`^other@example\.com$`}}},
+			},
+		},
+	}, 2, &out, func(context.Context) ([]quarantineSpamMessage, error) {
 		return []quarantineSpamMessage{
 			{EnvelopeSender: "sender@example.com", From: "Sender <sender@example.com>", Subject: "Weekly air shipment documents are ready for review"},
 			{EnvelopeSender: "sender@example.com", From: "Sender <sender@example.com>", Subject: "Weekly air shipment documents are ready for review"},
@@ -94,8 +108,8 @@ func TestAnalyzeWritesRows(t *testing.T) {
 
 	want := strings.Join([]string{
 		"Weekly air shipment documents are ready for review - 3 - latin - en",
-		"sender@example.com - Sender <sender@example.com> - 2",
-		"other@example.com - Other <other@example.com> - 1",
+		"sender@example.com - Sender <sender@example.com> - 2 - delete",
+		"other@example.com - Other <other@example.com> - 1 - deliver",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())
@@ -118,7 +132,7 @@ done`
 
 	want := strings.Join([]string{
 		"Уведомление о поступлении новых электронных документов - 2 - cyrillic - ru",
-		"sender@example.com - Sender <sender@example.com> - 2",
+		"sender@example.com - Sender <sender@example.com> - 2 - skip",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())

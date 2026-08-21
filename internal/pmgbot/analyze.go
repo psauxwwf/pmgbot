@@ -21,11 +21,13 @@ type spamAnalysisSenderRow struct {
 	EnvelopeSender string
 	From           string
 	Count          int
+	Action         string
 }
 
 type spamAnalysisSenderKey struct {
 	EnvelopeSender string
 	From           string
+	Action         string
 }
 
 func Analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer) error {
@@ -36,18 +38,26 @@ func AnalyzeSpamJSON(_ context.Context, config DaemonConfig, path string, minCou
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
+	rules, err := compileDaemonRules(config)
+	if err != nil {
+		return err
+	}
 
 	messages, err := readSpamMessagesJSON(path)
 	if err != nil {
 		return err
 	}
 
-	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount))
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules))
 }
 
 func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer, quarantineSpam quarantineSpamFunc) error {
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
+	}
+	rules, err := compileDaemonRules(config)
+	if err != nil {
+		return err
 	}
 
 	cycleCtx, cancel := context.WithTimeout(ctx, config.Timeout)
@@ -57,7 +67,7 @@ func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.W
 		return err
 	}
 
-	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount))
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules))
 }
 
 func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
@@ -66,7 +76,7 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
 			return fmt.Errorf("write spam analysis: %w", err)
 		}
 		for _, sender := range row.Senders {
-			if _, err := fmt.Fprintf(output, "%s - %s - %d\n", sender.EnvelopeSender, sender.From, sender.Count); err != nil {
+			if _, err := fmt.Fprintf(output, "%s - %s - %d - %s\n", sender.EnvelopeSender, sender.From, sender.Count, sender.Action); err != nil {
 				return fmt.Errorf("write spam analysis: %w", err)
 			}
 		}
@@ -80,7 +90,7 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
 	return nil
 }
 
-func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamAnalysisRow {
+func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules []compiledRule) []spamAnalysisRow {
 	if minCount <= 0 {
 		minCount = 1
 	}
@@ -93,6 +103,7 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 		key := spamAnalysisSenderKey{
 			EnvelopeSender: message.EnvelopeSender,
 			From:           message.From,
+			Action:         spamAnalysisMessageAction(message, rules),
 		}
 		countsBySubject[message.Subject][key]++
 	}
@@ -110,6 +121,7 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 				EnvelopeSender: sender.EnvelopeSender,
 				From:           sender.From,
 				Count:          count,
+				Action:         sender.Action,
 			})
 		}
 		if row.Count < minCount {
@@ -122,8 +134,11 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 			if row.Senders[i].EnvelopeSender != row.Senders[j].EnvelopeSender {
 				return row.Senders[i].EnvelopeSender < row.Senders[j].EnvelopeSender
 			}
+			if row.Senders[i].From != row.Senders[j].From {
+				return row.Senders[i].From < row.Senders[j].From
+			}
 
-			return row.Senders[i].From < row.Senders[j].From
+			return row.Senders[i].Action < row.Senders[j].Action
 		})
 		rows = append(rows, row)
 	}
@@ -136,4 +151,13 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int) []spamA
 	})
 
 	return rows
+}
+
+func spamAnalysisMessageAction(message quarantineSpamMessage, rules []compiledRule) string {
+	action, _, ok := decideQuarantineAction(message, rules)
+	if !ok {
+		return "skip"
+	}
+
+	return string(action)
 }

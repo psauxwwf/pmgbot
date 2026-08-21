@@ -1,6 +1,6 @@
 module pmgbot
 
-go 1.26
+go 1.27
 
 require (
 	github.com/charmbracelet/fang v1.0.0

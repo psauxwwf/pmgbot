@@ -161,8 +161,8 @@ func ruleGroupCount(action string, group FieldPatterns) (countCondition, error) 
 func parseCountOperator(countText string) (countOperator, string) {
 	for _, operator := range []countOperator{countEqualOrGreater, countEqualOrLess, countGreater, countLess} {
 		operatorText := string(operator)
-		if strings.HasPrefix(countText, operatorText) {
-			return operator, strings.TrimSpace(strings.TrimPrefix(countText, operatorText))
+		if after, ok := strings.CutPrefix(countText, operatorText); ok {
+			return operator, strings.TrimSpace(after)
 		}
 	}
 

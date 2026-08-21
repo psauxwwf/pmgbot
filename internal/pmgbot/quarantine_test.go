@@ -45,6 +45,81 @@ func TestCompileFieldPatternsReturnsUnknownNumericFieldError(t *testing.T) {
 	}
 }
 
+func TestCompileRulesAcceptsCountCondition(t *testing.T) {
+	rules, err := compileRules(Rules{{
+		Name:   "Delete repeated test subjects",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"3"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rules[0].When[0].Count.Operator != countEqualOrGreater || rules[0].When[0].Count.Value != 3 {
+		t.Fatalf("got count %#v, want >=3", rules[0].When[0].Count)
+	}
+}
+
+func TestCompileRulesAcceptsCountOperators(t *testing.T) {
+	tests := []struct {
+		name         string
+		count        string
+		wantOperator countOperator
+		wantValue    int
+	}{
+		{name: "greater", count: ">3", wantOperator: countGreater, wantValue: 3},
+		{name: "less", count: "<3", wantOperator: countLess, wantValue: 3},
+		{name: "greater or equal", count: ">=3", wantOperator: countEqualOrGreater, wantValue: 3},
+		{name: "less or equal", count: "<=3", wantOperator: countEqualOrLess, wantValue: 3},
+		{name: "spaces", count: ">= 3", wantOperator: countEqualOrGreater, wantValue: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rules, err := compileRules(Rules{{
+				Name:   "Delete repeated test subjects",
+				Action: quarantineActionDelete,
+				When:   RuleGroups{{"subject": {`^TEST$`}, "count": {tt.count}}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := rules[0].When[0].Count
+			if got.Operator != tt.wantOperator || got.Value != tt.wantValue {
+				t.Fatalf("got count %#v, want %s%d", got, tt.wantOperator, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestCompileRulesRejectsInvalidCountCondition(t *testing.T) {
+	_, err := compileRules(Rules{{
+		Name:   "Bad count",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"nope"}}},
+	}})
+	if err == nil {
+		t.Fatal("expected invalid count error")
+	}
+	if !strings.Contains(err.Error(), `Bad count count must be a single integer with optional comparison operator`) {
+		t.Fatalf("got error %q", err)
+	}
+}
+
+func TestCompileRulesRejectsCountBelowMinimum(t *testing.T) {
+	_, err := compileRules(Rules{{
+		Name:   "Bad count",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"0"}}},
+	}})
+	if err == nil {
+		t.Fatal("expected invalid count error")
+	}
+	if !strings.Contains(err.Error(), `Bad count count must be at least 1`) {
+		t.Fatalf("got error %q", err)
+	}
+}
+
 func TestCompileFieldPatternsIgnoresEmptyFields(t *testing.T) {
 	compiled, err := compileFieldPatterns("delete", FieldPatterns{
 		"bytes":     nil,
@@ -380,6 +455,81 @@ func TestDecideQuarantineActionMatchesInvertedPattern(t *testing.T) {
 			_, _, ok := decideQuarantineAction(quarantineSpamMessage{Subject: tt.subject}, rules)
 			if ok != tt.wantOK {
 				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestDecideQuarantineActionMatchesCountCondition(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete repeated test subjects",
+			Action: quarantineActionDelete,
+			When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"3"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	messages := []quarantineSpamMessage{
+		{ID: "1", Subject: "TEST"},
+		{ID: "2", Subject: "TEST"},
+		{ID: "3", Subject: "TEST"},
+		{ID: "4", Subject: "OTHER"},
+	}
+	got, ruleName, ok := decideQuarantineActionForMessages(messages[0], messages, rules)
+	if !ok || got != quarantineActionDelete || ruleName != "Delete repeated test subjects" {
+		t.Fatalf("got action %q rule %q ok %v", got, ruleName, ok)
+	}
+
+	_, _, ok = decideQuarantineActionForMessages(messages[3], messages, rules)
+	if ok {
+		t.Fatal("expected different subject not to match")
+	}
+
+	_, _, ok = decideQuarantineActionForMessages(messages[0], messages[:2], rules)
+	if ok {
+		t.Fatal("expected repeated subject below count not to match")
+	}
+}
+
+func TestDecideQuarantineActionMatchesCountOperators(t *testing.T) {
+	messages := []quarantineSpamMessage{
+		{ID: "1", Subject: "TEST"},
+		{ID: "2", Subject: "TEST"},
+		{ID: "3", Subject: "TEST"},
+		{ID: "4", Subject: "OTHER"},
+	}
+	tests := []struct {
+		name  string
+		count string
+		want  bool
+	}{
+		{name: "greater", count: ">2", want: true},
+		{name: "greater false", count: ">3"},
+		{name: "less", count: "<4", want: true},
+		{name: "less false", count: "<3"},
+		{name: "greater or equal", count: ">=3", want: true},
+		{name: "greater or equal false", count: ">=4"},
+		{name: "less or equal", count: "<=3", want: true},
+		{name: "less or equal false", count: "<=2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rules, err := compileRules(Rules{{
+				Name:   "Delete repeated test subjects",
+				Action: quarantineActionDelete,
+				When:   RuleGroups{{"subject": {`^TEST$`}, "count": {tt.count}}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, ok := decideQuarantineActionForMessages(messages[0], messages, rules)
+			if ok != tt.want {
+				t.Fatalf("got ok %v, want %v", ok, tt.want)
 			}
 		})
 	}

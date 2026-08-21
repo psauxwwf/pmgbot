@@ -2,7 +2,6 @@ package pmgbot
 
 import (
 	"context"
-	"regexp"
 	"slices"
 	"testing"
 	"time"
@@ -104,6 +103,53 @@ func TestCheckDoesNotApplyActions(t *testing.T) {
 	}
 }
 
+func TestRunDaemonOnceHonorsCountCondition(t *testing.T) {
+	rules, err := compileRules(Rules{{
+		Name:   "Delete repeated subject",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"3"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var actions []string
+	err = runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, func(context.Context) ([]quarantineSpamMessage, error) {
+		return []quarantineSpamMessage{
+			{ID: "1", Subject: "TEST"},
+			{ID: "2", Subject: "TEST"},
+			{ID: "3", Subject: "OTHER"},
+		}, nil
+	}, func(_ context.Context, id string, action quarantineAction) error {
+		actions = append(actions, id+":"+string(action))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("got actions %#v, want none below count", actions)
+	}
+
+	err = runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, func(context.Context) ([]quarantineSpamMessage, error) {
+		return []quarantineSpamMessage{
+			{ID: "1", Subject: "TEST"},
+			{ID: "2", Subject: "TEST"},
+			{ID: "3", Subject: "TEST"},
+		}, nil
+	}, func(_ context.Context, id string, action quarantineAction) error {
+		actions = append(actions, id+":"+string(action))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{"1:delete", "2:delete", "3:delete"}
+	if !slices.Equal(actions, expected) {
+		t.Fatalf("got actions %#v, want %#v", actions, expected)
+	}
+}
+
 func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
 	quarantineSpam := func(context.Context) ([]quarantineSpamMessage, error) {
 		return []quarantineSpamMessage{
@@ -123,24 +169,25 @@ func TestRunDaemonOnceAppliesActionsAndContinuesOnError(t *testing.T) {
 		return nil
 	}
 
-	rules := []compiledRule{
+	rules, err := compileRules(Rules{
 		{
 			Name:   "Deliver important",
 			Action: quarantineActionDeliver,
-			When: compiledRuleGroups{{
-				"subject": {{Regexp: regexp.MustCompile(`Important`)}},
-			}},
+			When:   RuleGroups{{"subject": {`Important`}}},
 		},
 		{
 			Name:   "Delete spam",
 			Action: quarantineActionDelete,
-			When: compiledRuleGroups{
-				{"subject": {{Regexp: regexp.MustCompile(`Lottery|Casino`)}}},
-				{"envelope_sender": {{Regexp: regexp.MustCompile(`bad@example\.com`)}}},
+			When: RuleGroups{
+				{"subject": {`Lottery|Casino`}},
+				{"envelope_sender": {`bad@example\.com`}},
 			},
 		},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, quarantineSpam, applyQuarantineAction)
+	err = runDaemonOnce(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, quarantineSpam, applyQuarantineAction)
 	if err == nil {
 		t.Fatal("expected action error")
 	}

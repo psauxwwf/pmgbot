@@ -116,6 +116,45 @@ func TestAnalyzeWritesRows(t *testing.T) {
 	}
 }
 
+func TestAnalyzeWritesActionsWithCountCondition(t *testing.T) {
+	var out bytes.Buffer
+	err := analyze(context.Background(), DaemonConfig{
+		Timeout: time.Minute,
+		Rules: Rules{
+			{
+				Name:   "Delete repeated subject",
+				Action: quarantineActionDelete,
+				When:   RuleGroups{{"subject": {`^Repeated$`}, "count": {"2"}}},
+			},
+			{
+				Name:   "Delete rare subject",
+				Action: quarantineActionDelete,
+				When:   RuleGroups{{"subject": {`^Rare$`}, "count": {"2"}}},
+			},
+		},
+	}, 1, &out, func(context.Context) ([]quarantineSpamMessage, error) {
+		return []quarantineSpamMessage{
+			{EnvelopeSender: "sender@example.com", From: "Sender <sender@example.com>", Subject: "Repeated"},
+			{EnvelopeSender: "other@example.com", From: "Other <other@example.com>", Subject: "Repeated"},
+			{EnvelopeSender: "rare@example.com", From: "Rare <rare@example.com>", Subject: "Rare"},
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		"sender@example.com - Sender <sender@example.com> - 1 - delete",
+		"other@example.com - Other <other@example.com> - 1 - delete",
+		"rare@example.com - Rare <rare@example.com> - 1 - skip",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output %q does not contain %q", got, want)
+		}
+	}
+}
+
 func TestAnalyzeSpamJSONWritesRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spam.json")
 	data := `200 OK

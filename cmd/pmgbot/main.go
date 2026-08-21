@@ -330,6 +330,16 @@ func defaultFileConfig(_ time.Time) pmgbot.FileConfig {
 				}},
 			},
 			{
+				Name:   "Delete TEST subjects by count examples",
+				Action: "delete",
+				When: pmgbot.RuleGroups{
+					{"subject": {`^TEST_GE$`}, "count": {">=3"}},
+					{"subject": {`^TEST_GT$`}, "count": {">3"}},
+					{"subject": {`^TEST_LE$`}, "count": {"<=3"}},
+					{"subject": {`^TEST_LT$`}, "count": {"<3"}},
+				},
+			},
+			{
 				Name:   "Delete payment subjects from noisy senders",
 				Action: "delete",
 				When: pmgbot.RuleGroups{{

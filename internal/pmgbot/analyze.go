@@ -103,7 +103,7 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules [
 		key := spamAnalysisSenderKey{
 			EnvelopeSender: message.EnvelopeSender,
 			From:           message.From,
-			Action:         spamAnalysisMessageAction(message, rules),
+			Action:         spamAnalysisMessageAction(message, messages, rules),
 		}
 		countsBySubject[message.Subject][key]++
 	}
@@ -153,8 +153,8 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules [
 	return rows
 }
 
-func spamAnalysisMessageAction(message quarantineSpamMessage, rules []compiledRule) string {
-	action, _, ok := decideQuarantineAction(message, rules)
+func spamAnalysisMessageAction(message quarantineSpamMessage, messages []quarantineSpamMessage, rules []compiledRule) string {
+	action, _, ok := decideQuarantineActionForMessages(message, messages, rules)
 	if !ok {
 		return "skip"
 	}

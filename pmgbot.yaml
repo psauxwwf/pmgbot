@@ -12,6 +12,10 @@ rules:
   # - несколько полей внутри одного элемента "-" задают И.
   # - префикс [!] инвертирует один regexp: '[!]Mail Delivery' = НЕ содержит Mail Delivery.
   #   Значения с [!] нужно брать в YAML-кавычки.
+  # - count в группе задает условие на число писем из текущего спама,
+  #   которые подходят под остальные условия этой же группы.
+  #   Поддерживаются операторы: 3 или '>=3', '>3', '<3', '<=3'.
+  #   Минимальное значение count: 1.
   # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
 
   # === 1. Самые простые правила ===
@@ -65,6 +69,23 @@ rules:
         subject:
           - '^\[SPAM\]: Зарегистрировался новый пользователь$'
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+
+  # Примеры count:
+  # - count: 3 или '>=3' = 3 или больше таких писем;
+  # - count: '>3' = больше 3 таких писем;
+  # - count: '<3' = меньше 3 таких писем;
+  # - count: '<=3' = 3 или меньше таких писем.
+  - name: Delete TEST subjects by count examples
+    action: delete
+    when:
+      - subject: '^TEST_GE$'
+        count: '>=3'
+      - subject: '^TEST_GT$'
+        count: '>3'
+      - subject: '^TEST_LE$'
+        count: '<=3'
+      - subject: '^TEST_LT$'
+        count: '<3'
 
   # (envelope_sender A ИЛИ envelope_sender B) И subject.
   - name: Delete payment subjects from noisy senders

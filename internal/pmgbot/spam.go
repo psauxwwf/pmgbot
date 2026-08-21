@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"pmgbot/pkg/lang"
@@ -20,7 +21,20 @@ type compiledPattern struct {
 }
 
 type compiledFieldPatterns map[string][]compiledPattern
-type compiledRuleGroups []compiledFieldPatterns
+
+type countOperator string
+
+type countCondition struct {
+	Operator countOperator
+	Value    int
+}
+
+type compiledRuleGroup struct {
+	Patterns compiledFieldPatterns
+	Count    countCondition
+}
+
+type compiledRuleGroups []compiledRuleGroup
 
 type compiledRule struct {
 	Name   string
@@ -34,6 +48,11 @@ const (
 	quarantineActionDeliver quarantineAction = "deliver"
 	quarantineActionDelete  quarantineAction = "delete"
 	invertedPatternPrefix   string           = "[!]"
+	ruleCountField          string           = "count"
+	countEqualOrGreater     countOperator    = ">="
+	countGreater            countOperator    = ">"
+	countEqualOrLess        countOperator    = "<="
+	countLess               countOperator    = "<"
 )
 
 var quarantineActions = []quarantineAction{
@@ -50,6 +69,9 @@ func compileFieldPatterns(action string, patterns FieldPatterns) (compiledFieldP
 	for field, fieldPatterns := range patterns {
 		field = strings.TrimSpace(field)
 		if field == "" {
+			continue
+		}
+		if field == ruleCountField {
 			continue
 		}
 		if !hasFieldPatterns(fieldPatterns) {
@@ -95,6 +117,11 @@ func patternRegexp(pattern string) (string, bool) {
 func compileRuleGroups(action string, groups RuleGroups) (compiledRuleGroups, error) {
 	compiled := make(compiledRuleGroups, 0, len(groups))
 	for _, group := range groups {
+		count, err := ruleGroupCount(action, group)
+		if err != nil {
+			return nil, err
+		}
+
 		compiledGroup, err := compileFieldPatterns(action, group)
 		if err != nil {
 			return nil, err
@@ -103,10 +130,43 @@ func compileRuleGroups(action string, groups RuleGroups) (compiledRuleGroups, er
 			continue
 		}
 
-		compiled = append(compiled, compiledGroup)
+		compiled = append(compiled, compiledRuleGroup{Patterns: compiledGroup, Count: count})
 	}
 
 	return compiled, nil
+}
+
+func ruleGroupCount(action string, group FieldPatterns) (countCondition, error) {
+	patterns, ok := group[ruleCountField]
+	if !ok || !hasFieldPatterns(patterns) {
+		return countCondition{}, nil
+	}
+	if len(patterns) != 1 {
+		return countCondition{}, fmt.Errorf("%s count must be a single integer with optional comparison operator", action)
+	}
+
+	countText := strings.TrimSpace(patterns[0])
+	operator, countText := parseCountOperator(countText)
+	count, err := strconv.Atoi(countText)
+	if err != nil {
+		return countCondition{}, fmt.Errorf("%s count must be a single integer with optional comparison operator: %q", action, patterns[0])
+	}
+	if count < 1 {
+		return countCondition{}, fmt.Errorf("%s count must be at least 1", action)
+	}
+
+	return countCondition{Operator: operator, Value: count}, nil
+}
+
+func parseCountOperator(countText string) (countOperator, string) {
+	for _, operator := range []countOperator{countEqualOrGreater, countEqualOrLess, countGreater, countLess} {
+		operatorText := string(operator)
+		if strings.HasPrefix(countText, operatorText) {
+			return operator, strings.TrimSpace(strings.TrimPrefix(countText, operatorText))
+		}
+	}
+
+	return countEqualOrGreater, countText
 }
 
 func compileRules(rules Rules) ([]compiledRule, error) {
@@ -150,14 +210,53 @@ func hasFieldPatterns(patterns []string) bool {
 	return false
 }
 
-func matchRuleGroups(message quarantineSpamMessage, groups compiledRuleGroups) bool {
+func matchRuleGroups(message quarantineSpamMessage, groups compiledRuleGroups, messages []quarantineSpamMessage) bool {
 	for _, group := range groups {
-		if matchFieldPatternGroup(message, group) {
+		if matchRuleGroup(message, group, messages) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func matchRuleGroup(message quarantineSpamMessage, group compiledRuleGroup, messages []quarantineSpamMessage) bool {
+	if !matchFieldPatternGroup(message, group.Patterns) {
+		return false
+	}
+	if !group.Count.Enabled() {
+		return true
+	}
+
+	return group.Count.Matches(countMatchingMessages(messages, group.Patterns))
+}
+
+func (condition countCondition) Enabled() bool {
+	return condition.Value > 0
+}
+
+func (condition countCondition) Matches(count int) bool {
+	switch condition.Operator {
+	case countGreater:
+		return count > condition.Value
+	case countLess:
+		return count < condition.Value
+	case countEqualOrLess:
+		return count <= condition.Value
+	default:
+		return count >= condition.Value
+	}
+}
+
+func countMatchingMessages(messages []quarantineSpamMessage, patterns compiledFieldPatterns) int {
+	var count int
+	for _, message := range messages {
+		if matchFieldPatternGroup(message, patterns) {
+			count++
+		}
+	}
+
+	return count
 }
 
 func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFieldPatterns) bool {
@@ -199,8 +298,16 @@ func decideQuarantineAction(
 	message quarantineSpamMessage,
 	rules []compiledRule,
 ) (quarantineAction, string, bool) {
+	return decideQuarantineActionForMessages(message, []quarantineSpamMessage{message}, rules)
+}
+
+func decideQuarantineActionForMessages(
+	message quarantineSpamMessage,
+	messages []quarantineSpamMessage,
+	rules []compiledRule,
+) (quarantineAction, string, bool) {
 	for _, rule := range rules {
-		if matchRuleGroups(message, rule.When) {
+		if matchRuleGroups(message, rule.When, messages) {
 			return rule.Action, rule.Name, true
 		}
 	}

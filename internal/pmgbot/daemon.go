@@ -125,7 +125,7 @@ func runDaemonCycle(
 	var actionErrors []error
 	var delivered, deleted, skipped int
 	for _, message := range messages {
-		action, ruleName, ok := decideQuarantineAction(message, rules)
+		action, ruleName, ok := decideQuarantineActionForMessages(message, messages, rules)
 		if !ok {
 			skipped++
 			continue

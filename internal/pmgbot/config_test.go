@@ -138,6 +138,71 @@ func TestFileConfigLoadsRulesWithAndFields(t *testing.T) {
 	}
 }
 
+func TestFileConfigLoadsRuleCountCondition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	content := strings.Join([]string{
+		`log_level: info`,
+		`log_path: ""`,
+		`sudo: true`,
+		`daemon:`,
+		`  every: 15m`,
+		`  timeout: 1m`,
+		`rules:`,
+		`  - name: Delete repeated subject`,
+		`    action: delete`,
+		`    when:`,
+		`      - subject: '^TEST$'`,
+		`        count: 3`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := LoadFileConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Rules[0].When[0]["count"][0] != "3" {
+		t.Fatalf("got rules %#v", config.Rules)
+	}
+}
+
+func TestFileConfigLoadsAndSavesRuleCountOperator(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	config := FileConfig{
+		LogLevel: "info",
+		Sudo:     true,
+		Daemon: FileDaemonConfig{
+			Every:   Duration(15 * time.Minute),
+			Timeout: Duration(time.Minute),
+		},
+		Rules: Rules{{
+			Name:   "Delete more than three",
+			Action: quarantineActionDelete,
+			When:   RuleGroups{{"subject": {`^TEST$`}, "count": {">3"}}},
+		}},
+	}
+	if err := SaveFileConfig(path, config); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "count: '>3'") {
+		t.Fatalf("saved config %q does not contain scalar count", string(data))
+	}
+
+	loaded, err := LoadFileConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Rules[0].When[0]["count"][0] != ">3" {
+		t.Fatalf("got rules %#v", loaded.Rules)
+	}
+}
+
 func TestDurationUnmarshalError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pmgbot.yaml")
 	content := strings.Join([]string{

@@ -114,6 +114,10 @@ rules:
   # - несколько полей внутри одного элемента "-" задают И.
   # - префикс [!] инвертирует один regexp: '[!]Mail Delivery' = НЕ содержит Mail Delivery.
   #   Значения с [!] нужно брать в YAML-кавычки.
+  # - count в группе задает условие на число писем из текущего спама,
+  #   которые подходят под остальные условия этой же группы.
+  #   Поддерживаются операторы: 3 или '>=3', '>3', '<3', '<=3'.
+  #   Минимальное значение count: 1.
   # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
 
   # Один field + несколько regexp: subject A ИЛИ subject B.
@@ -132,6 +136,23 @@ rules:
         subject:
           - '^\[SPAM\]: Зарегистрировался новый пользователь$'
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+
+  # Примеры count:
+  # - count: 3 или '>=3' = 3 или больше таких писем;
+  # - count: '>3' = больше 3 таких писем;
+  # - count: '<3' = меньше 3 таких писем;
+  # - count: '<=3' = 3 или меньше таких писем.
+  - name: Delete TEST subjects by count examples
+    action: delete
+    when:
+      - subject: '^TEST_GE$'
+        count: '>=3'
+      - subject: '^TEST_GT$'
+        count: '>3'
+      - subject: '^TEST_LE$'
+        count: '<=3'
+      - subject: '^TEST_LT$'
+        count: '<3'
 
   # (sender A ИЛИ B) И (receiver A ИЛИ B) И (subject A ИЛИ B).
   - name: Delete payment phishing to finance mailboxes
@@ -159,12 +180,26 @@ Fields:
 - `rules[].name`: human-readable rule name used in logs.
 - `rules[].action`: `deliver` or `delete`.
 - `rules[].when`: condition groups for this rule.
+- `rules[].when[].count`: optional comparison against the number of messages in the current spam load that match the other fields in the same condition group.
 
 Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.every` is used only by `pmgbot daemon`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` logs only matching messages with the action that would be applied, but does not deliver or delete anything.
 
 ## Matching Fields
 
 `rules` is an ordered list. A message matches the first rule where any `when` group matches. In rule conditions, YAML list items written with `-` mean `OR`: multiple `when` groups are alternatives, and multiple regexps under one field are alternatives too. Fields inside one `when` list item are combined with `AND`: every listed field must match at least one of its regexps.
+
+`count` is a special condition-group key, not a PMG message field and not a regexp. When present, it compares the number of messages in the current spam load that match the other fields in the same `when` group. If `count` is omitted, it does not affect matching.
+
+The minimum `count` value is `1`. A bare number means `>=N`. Quote operator values in YAML, especially values starting with `>` or `<`.
+
+Supported `count` forms:
+
+| What to require       | Count syntax         |
+| --------------------- | -------------------- |
+| 3 or more messages    | `count: 3` or `count: '>=3'` |
+| More than 3 messages  | `count: '>3'`        |
+| Fewer than 3 messages | `count: '<3'`        |
+| 3 or fewer messages   | `count: '<=3'`       |
 
 This rule deletes messages where `envelope_sender` matches and `subject` matches either listed regexp:
 
@@ -177,6 +212,34 @@ rules:
         subject:
           - '^\[SPAM\]: Зарегистрировался новый пользователь$'
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
+```
+
+This rule deletes messages with subject `TEST` only when the current spam load contains at least 3 messages whose subject matches `^TEST$`:
+
+```yaml
+rules:
+  - name: Delete repeated TEST subjects
+    action: delete
+    when:
+      - subject: '^TEST$'
+        count: 3
+```
+
+These rules show strict and non-strict count comparisons:
+
+```yaml
+rules:
+  - name: Delete TEST subjects by count examples
+    action: delete
+    when:
+      - subject: '^TEST_GE$'
+        count: '>=3'
+      - subject: '^TEST_GT$'
+        count: '>3'
+      - subject: '^TEST_LE$'
+        count: '<=3'
+      - subject: '^TEST_LT$'
+        count: '<3'
 ```
 
 Rule keys can use these PMG quarantine JSON text fields returned by `/quarantine/spam`:
@@ -193,7 +256,7 @@ Rules can also use computed fields derived from `subject`:
 
 Numeric PMG fields such as `bytes`, `spamlevel`, and `time` are parsed from PMG but are not available as rule keys.
 
-Unknown rule keys are rejected during config validation.
+Unknown rule keys are rejected during config validation. The special `count` key is allowed only as a condition-group threshold.
 
 Matching is case-sensitive by default. Use `(?i)` inside a regexp for case-insensitive matching.
 

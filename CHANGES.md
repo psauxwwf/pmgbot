@@ -13,3 +13,5 @@
 - Added `pmgbot analyze --config <file>` to count repeated spam subjects and show sender counts inside each subject.
 - Added `--min-count` for `analyze` to filter subjects by their total message count across all senders.
 - Added `[!]` regexp inversion for individual rule patterns, for example `subject: '[!]Mail Delivery'`.
+- Added optional `count` in rule condition groups to require a minimum number of current spam messages matching the other fields in the same group.
+- Added `count` comparison operators: `>N`, `<N`, `>=N`, and `<=N`; a bare `N` means `>=N`, and the minimum accepted value is `1`.

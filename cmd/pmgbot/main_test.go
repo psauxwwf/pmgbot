@@ -122,8 +122,8 @@ func TestConfigDefault(t *testing.T) {
 	if time.Duration(config.Daemon.Timeout) != defaultDaemonTimeout {
 		t.Fatalf("got daemon timeout %s, want %s", time.Duration(config.Daemon.Timeout), defaultDaemonTimeout)
 	}
-	if len(config.Rules) != 15 {
-		t.Fatalf("got %d rules, want 15", len(config.Rules))
+	if len(config.Rules) != 16 {
+		t.Fatalf("got %d rules, want 16", len(config.Rules))
 	}
 	if config.Rules[0].Name != "Delete webmaster registrations" || config.Rules[0].Action != "delete" {
 		t.Fatalf("got rules %#v", config.Rules)
@@ -134,7 +134,10 @@ func TestConfigDefault(t *testing.T) {
 	if config.Rules[5].Name != "Delete webmaster registration or payment confirmations" || config.Rules[5].When[0]["subject"][1] != `^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$` {
 		t.Fatalf("got rules %#v", config.Rules)
 	}
-	if config.Rules[14].Name != "Delete mixed phishing campaign" || len(config.Rules[14].When) != 2 {
+	if config.Rules[6].Name != "Delete TEST subjects by count examples" || config.Rules[6].When[0]["count"][0] != ">=3" || config.Rules[6].When[3]["count"][0] != "<3" {
+		t.Fatalf("got rules %#v", config.Rules)
+	}
+	if config.Rules[15].Name != "Delete mixed phishing campaign" || len(config.Rules[15].When) != 2 {
 		t.Fatalf("got rules %#v", config.Rules)
 	}
 	for _, field := range []string{"bytes", "id", "spamlevel", "time"} {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +43,28 @@ type Rule struct {
 type RuleGroups []FieldPatterns
 
 func (groups RuleGroups) MarshalYAML() (any, error) {
-	return []FieldPatterns(groups), nil
+	encoded := make([]map[string]any, 0, len(groups))
+	for _, group := range groups {
+		fields := make(map[string]any, len(group))
+		for field, patterns := range group {
+			if field == ruleCountField && len(patterns) == 1 {
+				countText := strings.TrimSpace(patterns[0])
+				count, err := strconv.Atoi(countText)
+				if err == nil {
+					fields[field] = count
+					continue
+				}
+
+				fields[field] = countText
+				continue
+			}
+
+			fields[field] = patterns
+		}
+		encoded = append(encoded, fields)
+	}
+
+	return encoded, nil
 }
 
 func (groups *RuleGroups) UnmarshalYAML(value *yaml.Node) error {

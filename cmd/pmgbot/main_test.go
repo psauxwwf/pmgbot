@@ -353,6 +353,44 @@ func TestCheckCommandRunsDryRun(t *testing.T) {
 	}
 }
 
+func TestCheckCommandWritesMarkdownReport(t *testing.T) {
+	originalRunCheckReport := runCheckReport
+	t.Cleanup(func() { runCheckReport = originalRunCheckReport })
+
+	var called bool
+	runCheckReport = func(_ context.Context, config pmgbot.DaemonConfig, output io.Writer, report bool) (string, error) {
+		called = true
+		if config.Timeout != defaultDaemonTimeout {
+			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
+		}
+		if !report {
+			t.Fatal("expected report flag")
+		}
+		_, err := io.WriteString(output, "summary | total: 1 | deliver: 0 | delete: 0 | skip: 1 | errors: 0\n")
+		return "pmgbot-check-report-20260822-083015-123456789.md", err
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "check", "--report"})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected check command to write markdown report")
+	}
+	if !strings.Contains(out.String(), "report | path: pmgbot-check-report-20260822-083015-123456789.md") {
+		t.Fatalf("got output %q", out.String())
+	}
+}
+
 func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 	originalRunAnalyze := runAnalyze
 	t.Cleanup(func() { runAnalyze = originalRunAnalyze })

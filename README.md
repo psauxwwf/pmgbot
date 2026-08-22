@@ -38,6 +38,15 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
+Save a detailed Markdown report for `run` or `check`:
+
+```bash
+pmgbot check --config pmgbot.yaml --report
+pmgbot run --config pmgbot.yaml --report
+```
+
+The report file name is generated automatically in the current directory, for example `pmgbot-check-report-20260822-083015-123456789.md`. When `--report` is used, stdout includes a final `report | path: ...` line. The Markdown report includes summary metrics, rule/sender/receiver/subject counts, skipped messages, and a final table with all planned or applied `deliver`/`delete` actions and their parameters.
+
 `run` and `check` stream a human-readable action report to stdout as messages are processed:
 
 ```text

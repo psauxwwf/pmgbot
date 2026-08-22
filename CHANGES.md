@@ -24,3 +24,4 @@
 - Changed `run` and `check` to print human-readable action reports to stdout; `run` still writes structured JSON logs to `log_path` without terminal log noise, and `daemon` keeps normal `slog`/JSON logging.
 - Changed human-readable `run`, `check`, and `analyze` output separators from ` - ` to ` | `.
 - Changed `run` and `check` action reports to stream message rows as each message is processed instead of printing the whole report after the cycle.
+- Added `--report` for `run` and `check` to save an automatically named Markdown report with summary metrics, grouped counts, skipped messages, and final deliver/delete action details.

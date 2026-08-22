@@ -3,6 +3,7 @@ package pmgbot
 import (
 	"bytes"
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -164,6 +165,80 @@ func TestWriteDaemonCycleReport(t *testing.T) {
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())
+	}
+}
+
+func TestWriteDaemonMarkdownReport(t *testing.T) {
+	t.Chdir(t.TempDir())
+	originalNow := daemonReportNow
+	t.Cleanup(func() { daemonReportNow = originalNow })
+	daemonReportNow = func() time.Time {
+		return time.Date(2026, 8, 22, 8, 30, 15, 123456789, time.UTC)
+	}
+
+	path, err := WriteDaemonMarkdownReport("check", daemonCycleReport{
+		DryRun:    true,
+		Total:     3,
+		Delivered: 1,
+		Deleted:   0,
+		Skipped:   1,
+		Errors:    1,
+		Actions: []daemonCycleActionRow{
+			{
+				ID:       "deliver-id",
+				Action:   quarantineActionDeliver,
+				RuleName: "Deliver trusted",
+				Message: quarantineSpamMessage{
+					ID:             "deliver-id",
+					EnvelopeSender: "trusted@example.com",
+					From:           "Trusted <trusted@example.com>",
+					Receiver:       "user@example.com",
+					Subject:        "Important | Report",
+					SpamLevel:      1,
+					Bytes:          123,
+					Time:           1787385600,
+				},
+			},
+			{
+				ID:       "",
+				Action:   quarantineActionDelete,
+				RuleName: "Delete spam",
+				Message:  quarantineSpamMessage{Subject: "Bad", EnvelopeSender: "bad@example.com"},
+				Error:    context.Canceled,
+			},
+		},
+		SkippedMessages: []quarantineSpamMessage{{ID: "skip-id", Subject: "Normal", EnvelopeSender: "sender@example.com"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "pmgbot-check-report-20260822-083015-123456789.md" {
+		t.Fatalf("got path %q", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"# pmgbot check report",
+		"| dry_run | true |",
+		"| total | 3 |",
+		"## Rule Metrics",
+		"| deliver | Deliver trusted | 1 | 1 | 0 | 0 |",
+		"## Skipped Messages",
+		"skip-id",
+		"## Actions",
+		"Important \\| Report",
+		"context canceled",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("report %q does not contain %q", got, want)
+		}
+	}
+	if strings.LastIndex(got, "## Actions") < strings.LastIndex(got, "## Skipped Messages") {
+		t.Fatalf("actions must be the final detail section: %q", got)
 	}
 }
 

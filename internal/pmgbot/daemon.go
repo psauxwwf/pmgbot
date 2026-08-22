@@ -23,13 +23,14 @@ type daemonCycleActionRow struct {
 }
 
 type daemonCycleReport struct {
-	DryRun    bool
-	Total     int
-	Delivered int
-	Deleted   int
-	Skipped   int
-	Errors    int
-	Actions   []daemonCycleActionRow
+	DryRun          bool
+	Total           int
+	Delivered       int
+	Deleted         int
+	Skipped         int
+	Errors          int
+	Actions         []daemonCycleActionRow
+	SkippedMessages []quarantineSpamMessage
 }
 
 func RunOnce(ctx context.Context, config DaemonConfig) error {
@@ -49,6 +50,24 @@ func RunOnceOutput(ctx context.Context, config DaemonConfig, output io.Writer) e
 	return err
 }
 
+func RunOnceOutputReport(ctx context.Context, config DaemonConfig, output io.Writer, writeReport bool) (string, error) {
+	if config.Timeout <= 0 {
+		return "", fmt.Errorf("daemon timeout must be greater than zero")
+	}
+	rules, err := compileDaemonRules(config)
+	if err != nil {
+		return "", err
+	}
+
+	report, err := runDaemonOnceReportOutput(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext, output)
+	if !writeReport {
+		return "", err
+	}
+
+	path, reportErr := WriteDaemonMarkdownReport("run", report)
+	return path, errors.Join(err, reportErr)
+}
+
 func Check(ctx context.Context, config DaemonConfig) error {
 	return CheckOutput(ctx, config, io.Discard)
 }
@@ -64,6 +83,24 @@ func CheckOutput(ctx context.Context, config DaemonConfig, output io.Writer) err
 
 	_, err = runDaemonCheckReportOutput(ctx, config, rules, pmgQuarantineSpamContext, output)
 	return err
+}
+
+func CheckOutputReport(ctx context.Context, config DaemonConfig, output io.Writer, writeReport bool) (string, error) {
+	if config.Timeout <= 0 {
+		return "", fmt.Errorf("daemon timeout must be greater than zero")
+	}
+	rules, err := compileDaemonRules(config)
+	if err != nil {
+		return "", err
+	}
+
+	report, err := runDaemonCheckReportOutput(ctx, config, rules, pmgQuarantineSpamContext, output)
+	if !writeReport {
+		return "", err
+	}
+
+	path, reportErr := WriteDaemonMarkdownReport("check", report)
+	return path, errors.Join(err, reportErr)
 }
 
 func Daemon(ctx context.Context, config DaemonConfig) error {
@@ -226,6 +263,7 @@ func runDaemonCycle(
 		action, ruleName, ok := decideQuarantineActionForMessages(message, messages, rules)
 		if !ok {
 			report.Skipped++
+			report.SkippedMessages = append(report.SkippedMessages, message)
 			continue
 		}
 

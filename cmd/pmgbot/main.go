@@ -43,9 +43,15 @@ type analyzeOptions struct {
 	MinCount int
 }
 
+type reportOptions struct {
+	Report bool
+}
+
 var (
 	runOnce         = pmgbot.RunOnceOutput
+	runOnceReport   = pmgbot.RunOnceOutputReport
 	runCheck        = pmgbot.CheckOutput
+	runCheckReport  = pmgbot.CheckOutputReport
 	runDaemon       = pmgbot.Daemon
 	runAnalyze      = pmgbot.Analyze
 	runAnalyzeJSON  = pmgbot.AnalyzeSpamJSON
@@ -101,6 +107,8 @@ func rootCmd() *cobra.Command {
 }
 
 func runCmd(logConfig *cliConfig) *cobra.Command {
+	var options reportOptions
+
 	run := &cobra.Command{
 		Use:           "run",
 		Short:         "Run one PMG spam quarantine processing cycle",
@@ -108,14 +116,21 @@ func runCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if options.Report {
+				return runConfiguredRunOutputReport(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), true, runOnceReport)
+			}
+
 			return runConfiguredRunOutput(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), runOnce)
 		},
 	}
+	run.Flags().BoolVar(&options.Report, "report", false, "write markdown report with metrics and actions")
 
 	return run
 }
 
 func checkCmd(logConfig *cliConfig) *cobra.Command {
+	var options reportOptions
+
 	check := &cobra.Command{
 		Use:           "check",
 		Short:         "Log matching PMG spam quarantine actions without applying them",
@@ -123,9 +138,14 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if options.Report {
+				return runConfiguredOutputReport(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), true, runCheckReport)
+			}
+
 			return runConfiguredOutput(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), runCheck)
 		},
 	}
+	check.Flags().BoolVar(&options.Report, "report", false, "write markdown report with metrics and actions")
 
 	return check
 }
@@ -262,6 +282,31 @@ func runConfiguredOutput(
 	return run(ctx, fileConfig.DaemonConfig(), output)
 }
 
+func runConfiguredOutputReport(
+	ctx context.Context,
+	configPath string,
+	output io.Writer,
+	writeReport bool,
+	run func(context.Context, pmgbot.DaemonConfig, io.Writer, bool) (string, error),
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	configureDiscardLogger()
+
+	path, err := run(ctx, fileConfig.DaemonConfig(), output, writeReport)
+	if path != "" {
+		if _, writeErr := fmt.Fprintf(output, "report | path: %s\n", path); writeErr != nil {
+			return fmt.Errorf("write report path: %w", writeErr)
+		}
+	}
+
+	return err
+}
+
 func runConfiguredRunOutput(
 	ctx context.Context,
 	configPath string,
@@ -279,6 +324,33 @@ func runConfiguredRunOutput(
 	}
 
 	return run(ctx, fileConfig.DaemonConfig(), output)
+}
+
+func runConfiguredRunOutputReport(
+	ctx context.Context,
+	configPath string,
+	output io.Writer,
+	writeReport bool,
+	run func(context.Context, pmgbot.DaemonConfig, io.Writer, bool) (string, error),
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	if err := configureFileLogger(fileConfig.LogLevel, fileConfig.LogPath); err != nil {
+		return err
+	}
+
+	path, err := run(ctx, fileConfig.DaemonConfig(), output, writeReport)
+	if path != "" {
+		if _, writeErr := fmt.Fprintf(output, "report | path: %s\n", path); writeErr != nil {
+			return fmt.Errorf("write report path: %w", writeErr)
+		}
+	}
+
+	return err
 }
 
 func runConfiguredAnalyze(

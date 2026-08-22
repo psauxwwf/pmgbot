@@ -107,11 +107,11 @@ func TestAnalyzeWritesRows(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"Weekly air shipment documents are ready for review - 3 - latin - en",
-		"sender@example.com - Sender <sender@example.com> - delete-1,delete-2 - 2 - [delete:Delete sender]",
-		"other@example.com - Other <other@example.com> - deliver-1 - 1 - [deliver:Deliver other]",
+		"Weekly air shipment documents are ready for review | 3 | latin | en",
+		"sender@example.com | Sender <sender@example.com> | [delete-1,delete-2] | 2 | [delete:Delete sender]",
+		"other@example.com | Other <other@example.com> | [deliver-1] | 1 | [deliver:Deliver other]",
 		"---",
-		"summary - total: 4 - deliver: 2 - delete: 2 - remain: 0",
+		"summary | total: 4 | deliver: 2 | delete: 2 | remain: 0",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())
@@ -142,10 +142,10 @@ func TestAnalyzeWritesActionsWithCountCondition(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"sender@example.com - Sender <sender@example.com> - repeated-1 - 1 - [delete:Delete repeated subjects]",
-		"other@example.com - Other <other@example.com> - repeated-2 - 1 - [delete:Delete repeated subjects]",
-		"rare@example.com - Rare <rare@example.com> - rare-1 - 1 - skip",
-		"summary - total: 3 - deliver: 0 - delete: 2 - remain: 1",
+		"sender@example.com | Sender <sender@example.com> | [repeated-1] | 1 | [delete:Delete repeated subjects]",
+		"other@example.com | Other <other@example.com> | [repeated-2] | 1 | [delete:Delete repeated subjects]",
+		"rare@example.com | Rare <rare@example.com> | [rare-1] | 1 | skip",
+		"summary | total: 3 | deliver: 0 | delete: 2 | remain: 1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q does not contain %q", got, want)
@@ -168,10 +168,10 @@ done`
 	}
 
 	want := strings.Join([]string{
-		"Уведомление о поступлении новых электронных документов - 2 - cyrillic - ru",
-		"sender@example.com - Sender <sender@example.com> - json-1,json-2 - 2 - skip",
+		"Уведомление о поступлении новых электронных документов | 2 | cyrillic | ru",
+		"sender@example.com | Sender <sender@example.com> | [json-1,json-2] | 2 | skip",
 		"---",
-		"summary - total: 3 - deliver: 0 - delete: 0 - remain: 3",
+		"summary | total: 3 | deliver: 0 | delete: 0 | remain: 3",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())

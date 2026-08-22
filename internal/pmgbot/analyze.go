@@ -81,11 +81,11 @@ func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.W
 
 func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow, summary spamAnalysisSummary) error {
 	for i, row := range rows {
-		if _, err := fmt.Fprintf(output, "%s - %d - %s - %s\n", row.Subject, row.Count, row.Script, row.Language); err != nil {
+		if _, err := fmt.Fprintf(output, "%s | %d | %s | %s\n", row.Subject, row.Count, row.Script, row.Language); err != nil {
 			return fmt.Errorf("write spam analysis: %w", err)
 		}
 		for _, sender := range row.Senders {
-			if _, err := fmt.Fprintf(output, "%s - %s - %s - %d - %s\n", sender.EnvelopeSender, sender.From, sender.IDText(), sender.Count, sender.Action); err != nil {
+			if _, err := fmt.Fprintf(output, "%s | %s | %s | %d | %s\n", sender.EnvelopeSender, sender.From, sender.IDText(), sender.Count, sender.Action); err != nil {
 				return fmt.Errorf("write spam analysis: %w", err)
 			}
 		}
@@ -100,7 +100,7 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow, summary spamAna
 			return fmt.Errorf("write spam analysis: %w", err)
 		}
 	}
-	if _, err := fmt.Fprintf(output, "summary - total: %d - deliver: %d - delete: %d - remain: %d\n", summary.Total, summary.Deliver, summary.Delete, summary.Remain); err != nil {
+	if _, err := fmt.Fprintf(output, "summary | total: %d | deliver: %d | delete: %d | remain: %d\n", summary.Total, summary.Deliver, summary.Delete, summary.Remain); err != nil {
 		return fmt.Errorf("write spam analysis: %w", err)
 	}
 
@@ -112,7 +112,7 @@ func (row spamAnalysisSenderRow) IDText() string {
 		return "-"
 	}
 
-	return strings.Join(row.IDs, ",")
+	return "[" + strings.Join(row.IDs, ",") + "]"
 }
 
 func analyzeSpamSummary(messages []quarantineSpamMessage, rules []compiledRule) spamAnalysisSummary {

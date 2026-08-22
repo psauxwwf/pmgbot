@@ -38,6 +38,22 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
+`run` and `check` stream a human-readable action report to stdout as messages are processed:
+
+```text
+subject | id
+envelope_sender | from | receiver | action
+---
+next subject | next id
+next envelope_sender | next from | next receiver | next action
+---
+summary | total: 10 | deliver: 2 | delete: 3 | skip: 5 | errors: 0
+```
+
+Every message row is followed by `---`. If `run` cannot apply an action, the row ends with `| error: ...`.
+Action is printed as `[delete:RULE_NAME]` or `[deliver:RULE_NAME]`.
+The `run` command also writes structured JSON logs to `log_path` when it is configured, but does not print those logs to the terminal. The `check` command prints only the stdout report. The `daemon` command writes text logs to the terminal and JSON logs to `log_path` when it is configured.
+
 Print detailed quarantine content by message ID as JSON:
 
 ```bash
@@ -83,17 +99,17 @@ The generator does not edit `pmgbot.yaml`. It prints a `rules:` YAML fragment fo
 Output format:
 
 ```text
-subject - count - script - lang
-envelope_sender - from - id - count - action
+subject | count | script | lang
+envelope_sender | from | id | count | action
 ---
-next subject - count - script - lang
-next envelope_sender - next from - next id - count - action
+next subject | count | script | lang
+next envelope_sender | next from | next id | count | action
 ---
-summary - total: 10 - deliver: 2 - delete: 3 - remain: 5
+summary | total: 10 | deliver: 2 | delete: 3 | remain: 5
 ```
 
 Sender action is `skip` when no rule matches, or `[delete:RULE_NAME]` / `[deliver:RULE_NAME]` when a rule matches.
-When a sender row aggregates multiple messages, IDs are comma-separated. If a loaded JSON dump has no message IDs, the ID column is `-`.
+When a sender row aggregates multiple messages, IDs are comma-separated inside brackets, for example `[id1,id2,id3]`. If a loaded JSON dump has no message IDs, the ID column is `-`.
 The summary is calculated across all loaded spam messages, not only subjects shown after `--min-count` filtering.
 
 Run continuously as a daemon:
@@ -201,7 +217,7 @@ Fields:
 - `rules[].when`: condition groups for this rule.
 - `rules[].when[].count`: optional comparison against the number of messages in the current spam load that match the other fields in the same condition group.
 
-Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.cron` uses standard 5-field cron syntax by default, for example `0 8 * * *` for every day at 08:00; 6-field cron with seconds is also accepted. `pmgbot daemon` runs one cycle immediately at startup and then follows `daemon.cron`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` logs only matching messages with the action that would be applied, but does not deliver or delete anything.
+Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.cron` uses standard 5-field cron syntax by default, for example `0 8 * * *` for every day at 08:00; 6-field cron with seconds is also accepted. `pmgbot daemon` runs one cycle immediately at startup and then follows `daemon.cron`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` prints matching messages with the action that would be applied, but does not deliver or delete anything.
 
 ## Matching Fields
 

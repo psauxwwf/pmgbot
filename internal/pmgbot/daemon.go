@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -13,7 +14,29 @@ import (
 type quarantineSpamFunc func(context.Context) ([]quarantineSpamMessage, error)
 type applyQuarantineActionFunc func(context.Context, string, quarantineAction) error
 
+type daemonCycleActionRow struct {
+	ID       string
+	Action   quarantineAction
+	RuleName string
+	Message  quarantineSpamMessage
+	Error    error
+}
+
+type daemonCycleReport struct {
+	DryRun    bool
+	Total     int
+	Delivered int
+	Deleted   int
+	Skipped   int
+	Errors    int
+	Actions   []daemonCycleActionRow
+}
+
 func RunOnce(ctx context.Context, config DaemonConfig) error {
+	return RunOnceOutput(ctx, config, io.Discard)
+}
+
+func RunOnceOutput(ctx context.Context, config DaemonConfig, output io.Writer) error {
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
@@ -22,10 +45,15 @@ func RunOnce(ctx context.Context, config DaemonConfig) error {
 		return err
 	}
 
-	return runDaemonOnce(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext)
+	_, err = runDaemonOnceReportOutput(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext, output)
+	return err
 }
 
 func Check(ctx context.Context, config DaemonConfig) error {
+	return CheckOutput(ctx, config, io.Discard)
+}
+
+func CheckOutput(ctx context.Context, config DaemonConfig, output io.Writer) error {
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
 	}
@@ -34,7 +62,8 @@ func Check(ctx context.Context, config DaemonConfig) error {
 		return err
 	}
 
-	return runDaemonCheck(ctx, config, rules, pmgQuarantineSpamContext)
+	_, err = runDaemonCheckReportOutput(ctx, config, rules, pmgQuarantineSpamContext, output)
+	return err
 }
 
 func Daemon(ctx context.Context, config DaemonConfig) error {
@@ -117,7 +146,29 @@ func runDaemonOnce(
 	quarantineSpam quarantineSpamFunc,
 	applyQuarantineAction applyQuarantineActionFunc,
 ) error {
-	return runDaemonCycle(ctx, config, rules, false, quarantineSpam, applyQuarantineAction)
+	_, err := runDaemonOnceReportOutput(ctx, config, rules, quarantineSpam, applyQuarantineAction, io.Discard)
+	return err
+}
+
+func runDaemonOnceReport(
+	ctx context.Context,
+	config DaemonConfig,
+	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
+	applyQuarantineAction applyQuarantineActionFunc,
+) (daemonCycleReport, error) {
+	return runDaemonOnceReportOutput(ctx, config, rules, quarantineSpam, applyQuarantineAction, io.Discard)
+}
+
+func runDaemonOnceReportOutput(
+	ctx context.Context,
+	config DaemonConfig,
+	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
+	applyQuarantineAction applyQuarantineActionFunc,
+	output io.Writer,
+) (daemonCycleReport, error) {
+	return runDaemonCycle(ctx, config, rules, false, quarantineSpam, applyQuarantineAction, output)
 }
 
 func runDaemonCheck(
@@ -126,7 +177,27 @@ func runDaemonCheck(
 	rules []compiledRule,
 	quarantineSpam quarantineSpamFunc,
 ) error {
-	return runDaemonCycle(ctx, config, rules, true, quarantineSpam, nil)
+	_, err := runDaemonCheckReportOutput(ctx, config, rules, quarantineSpam, io.Discard)
+	return err
+}
+
+func runDaemonCheckReport(
+	ctx context.Context,
+	config DaemonConfig,
+	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
+) (daemonCycleReport, error) {
+	return runDaemonCheckReportOutput(ctx, config, rules, quarantineSpam, io.Discard)
+}
+
+func runDaemonCheckReportOutput(
+	ctx context.Context,
+	config DaemonConfig,
+	rules []compiledRule,
+	quarantineSpam quarantineSpamFunc,
+	output io.Writer,
+) (daemonCycleReport, error) {
+	return runDaemonCycle(ctx, config, rules, true, quarantineSpam, nil, output)
 }
 
 func runDaemonCycle(
@@ -136,39 +207,48 @@ func runDaemonCycle(
 	dryRun bool,
 	quarantineSpam quarantineSpamFunc,
 	applyQuarantineAction applyQuarantineActionFunc,
-) error {
+	output io.Writer,
+) (daemonCycleReport, error) {
 	cycleCtx, cancel := context.WithTimeout(ctx, config.Timeout)
 	messages, err := quarantineSpam(cycleCtx)
 	cancel()
 	if err != nil {
-		return err
+		return daemonCycleReport{DryRun: dryRun}, err
 	}
+	report := daemonCycleReport{DryRun: dryRun, Total: len(messages)}
 	slog.Info("daemon quarantine spam loaded", "count", len(messages))
 	if len(messages) == 0 {
-		return nil
+		return report, writeDaemonCycleSummary(output, report)
 	}
 
 	var actionErrors []error
-	var delivered, deleted, skipped int
 	for _, message := range messages {
 		action, ruleName, ok := decideQuarantineActionForMessages(message, messages, rules)
 		if !ok {
-			skipped++
+			report.Skipped++
 			continue
 		}
 
 		id, err := quarantineSpamID(message)
 		if err != nil {
 			actionErrors = append(actionErrors, err)
+			report.Errors++
+			row := daemonCycleActionRow{Action: action, RuleName: ruleName, Message: message, Error: err}
+			report.Actions = append(report.Actions, row)
 			slog.Error("quarantine spam action skipped", "error", err, "message", message)
+			if err := writeDaemonCycleAction(output, row); err != nil {
+				return report, errors.Join(errors.Join(actionErrors...), err)
+			}
 			continue
 		}
 		if dryRun {
 			if action == quarantineActionDeliver {
-				delivered++
+				report.Delivered++
 			} else {
-				deleted++
+				report.Deleted++
 			}
+			row := daemonCycleActionRow{ID: id, Action: action, RuleName: ruleName, Message: message}
+			report.Actions = append(report.Actions, row)
 			slog.Info("quarantine spam action planned",
 				"id", id,
 				"action", action,
@@ -181,6 +261,9 @@ func runDaemonCycle(
 				"bytes", message.Bytes,
 				"time", message.Time,
 			)
+			if err := writeDaemonCycleAction(output, row); err != nil {
+				return report, errors.Join(errors.Join(actionErrors...), err)
+			}
 			continue
 		}
 
@@ -189,15 +272,23 @@ func runDaemonCycle(
 		cancel()
 		if err != nil {
 			actionErrors = append(actionErrors, err)
+			report.Errors++
+			row := daemonCycleActionRow{ID: id, Action: action, RuleName: ruleName, Message: message, Error: err}
+			report.Actions = append(report.Actions, row)
 			slog.Error("quarantine spam action failed", "id", id, "action", action, "rule", ruleName, "error", err)
+			if err := writeDaemonCycleAction(output, row); err != nil {
+				return report, errors.Join(errors.Join(actionErrors...), err)
+			}
 			continue
 		}
 
 		if action == quarantineActionDeliver {
-			delivered++
+			report.Delivered++
 		} else {
-			deleted++
+			report.Deleted++
 		}
+		row := daemonCycleActionRow{ID: id, Action: action, RuleName: ruleName, Message: message}
+		report.Actions = append(report.Actions, row)
 		slog.Info(
 			"quarantine spam action applied",
 			"id",
@@ -211,12 +302,81 @@ func runDaemonCycle(
 			"receiver", message.Receiver,
 			"subject", message.Subject,
 		)
+		if err := writeDaemonCycleAction(output, row); err != nil {
+			return report, errors.Join(errors.Join(actionErrors...), err)
+		}
 	}
 	if dryRun {
-		slog.Info("daemon quarantine spam checked", "deliver", delivered, "delete", deleted, "skipped", skipped, "errors", len(actionErrors))
+		slog.Info("daemon quarantine spam checked", "deliver", report.Delivered, "delete", report.Deleted, "skipped", report.Skipped, "errors", len(actionErrors))
 	} else {
-		slog.Info("daemon quarantine spam processed", "delivered", delivered, "deleted", deleted, "skipped", skipped, "errors", len(actionErrors))
+		slog.Info("daemon quarantine spam processed", "delivered", report.Delivered, "deleted", report.Deleted, "skipped", report.Skipped, "errors", len(actionErrors))
 	}
 
-	return errors.Join(actionErrors...)
+	return report, errors.Join(errors.Join(actionErrors...), writeDaemonCycleSummary(output, report))
+}
+
+func writeDaemonCycleReport(output io.Writer, report daemonCycleReport) error {
+	for _, action := range report.Actions {
+		if err := writeDaemonCycleAction(output, action); err != nil {
+			return err
+		}
+	}
+	return writeDaemonCycleSummary(output, report)
+}
+
+func writeDaemonCycleAction(output io.Writer, action daemonCycleActionRow) error {
+	if _, err := fmt.Fprintf(
+		output,
+		"%s | %s\n%s | %s | %s | %s",
+		action.Message.Subject,
+		daemonCycleActionID(action.ID),
+		action.Message.EnvelopeSender,
+		action.Message.From,
+		action.Message.Receiver,
+		daemonCycleActionText(action.Action, action.RuleName),
+	); err != nil {
+		return fmt.Errorf("write daemon cycle report: %w", err)
+	}
+	if action.Error != nil {
+		if _, err := fmt.Fprintf(output, " | error: %s", action.Error); err != nil {
+			return fmt.Errorf("write daemon cycle report: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintln(output); err != nil {
+		return fmt.Errorf("write daemon cycle report: %w", err)
+	}
+	if _, err := fmt.Fprintln(output, "---"); err != nil {
+		return fmt.Errorf("write daemon cycle report: %w", err)
+	}
+
+	return nil
+}
+
+func writeDaemonCycleSummary(output io.Writer, report daemonCycleReport) error {
+	if _, err := fmt.Fprintf(
+		output,
+		"summary | total: %d | deliver: %d | delete: %d | skip: %d | errors: %d\n",
+		report.Total,
+		report.Delivered,
+		report.Deleted,
+		report.Skipped,
+		report.Errors,
+	); err != nil {
+		return fmt.Errorf("write daemon cycle report: %w", err)
+	}
+
+	return nil
+}
+
+func daemonCycleActionID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "-"
+	}
+
+	return id
+}
+
+func daemonCycleActionText(action quarantineAction, ruleName string) string {
+	return fmt.Sprintf("[%s:%s]", action, ruleName)
 }

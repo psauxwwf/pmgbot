@@ -44,8 +44,8 @@ type analyzeOptions struct {
 }
 
 var (
-	runOnce         = pmgbot.RunOnce
-	runCheck        = pmgbot.Check
+	runOnce         = pmgbot.RunOnceOutput
+	runCheck        = pmgbot.CheckOutput
 	runDaemon       = pmgbot.Daemon
 	runAnalyze      = pmgbot.Analyze
 	runAnalyzeJSON  = pmgbot.AnalyzeSpamJSON
@@ -108,7 +108,7 @@ func runCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runConfigured(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), runOnce)
+			return runConfiguredRunOutput(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), runOnce)
 		},
 	}
 
@@ -123,7 +123,7 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runConfigured(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), runCheck)
+			return runConfiguredOutput(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), cmd.OutOrStdout(), runCheck)
 		},
 	}
 
@@ -243,6 +243,42 @@ func runConfigured(
 	}
 
 	return run(ctx, fileConfig.DaemonConfig())
+}
+
+func runConfiguredOutput(
+	ctx context.Context,
+	configPath string,
+	output io.Writer,
+	run func(context.Context, pmgbot.DaemonConfig, io.Writer) error,
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	configureDiscardLogger()
+
+	return run(ctx, fileConfig.DaemonConfig(), output)
+}
+
+func runConfiguredRunOutput(
+	ctx context.Context,
+	configPath string,
+	output io.Writer,
+	run func(context.Context, pmgbot.DaemonConfig, io.Writer) error,
+) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	if err := configureFileLogger(fileConfig.LogLevel, fileConfig.LogPath); err != nil {
+		return err
+	}
+
+	return run(ctx, fileConfig.DaemonConfig(), output)
 }
 
 func runConfiguredAnalyze(
@@ -519,6 +555,37 @@ func configureLogger(levelText, logPath string) error {
 	}
 
 	slog.SetDefault(slog.New(slog.NewMultiHandler(h...)))
+
+	return nil
+}
+
+func configureDiscardLogger() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func configureFileLogger(levelText, logPath string) error {
+	var parsedLevel slog.Level
+	if err := parsedLevel.UnmarshalText([]byte(levelText)); err != nil {
+		return fmt.Errorf("invalid log level %q: %w", levelText, err)
+	}
+	if logPath == "" {
+		configureDiscardLogger()
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return fmt.Errorf("failed to create log dir for %q: %w", logPath, err)
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file %q: %w", logPath, err)
+	}
+
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     parsedLevel,
+	})))
 
 	return nil
 }

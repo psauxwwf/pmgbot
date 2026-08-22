@@ -1,8 +1,10 @@
 package pmgbot
 
 import (
+	"bytes"
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,6 +112,88 @@ func TestCheckDoesNotApplyActions(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWriteDaemonCycleReport(t *testing.T) {
+	report := daemonCycleReport{
+		DryRun:    true,
+		Total:     3,
+		Delivered: 1,
+		Deleted:   1,
+		Skipped:   1,
+		Actions: []daemonCycleActionRow{
+			{
+				ID:       "delete-id",
+				Action:   quarantineActionDelete,
+				RuleName: "Delete spam",
+				Message: quarantineSpamMessage{
+					EnvelopeSender: "bad@example.com",
+					From:           "Bad <bad@example.com>",
+					Receiver:       "user@example.com",
+					Subject:        "Lottery",
+				},
+			},
+			{
+				ID:       "deliver-id",
+				Action:   quarantineActionDeliver,
+				RuleName: "Deliver trusted",
+				Message: quarantineSpamMessage{
+					EnvelopeSender: "trusted@example.com",
+					From:           "Trusted <trusted@example.com>",
+					Receiver:       "user@example.com",
+					Subject:        "Important",
+				},
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	if err := writeDaemonCycleReport(&out, report); err != nil {
+		t.Fatal(err)
+	}
+
+	want := strings.Join([]string{
+		"Lottery | delete-id",
+		"bad@example.com | Bad <bad@example.com> | user@example.com | [delete:Delete spam]",
+		"---",
+		"Important | deliver-id",
+		"trusted@example.com | Trusted <trusted@example.com> | user@example.com | [deliver:Deliver trusted]",
+		"---",
+		"summary | total: 3 | deliver: 1 | delete: 1 | skip: 1 | errors: 0",
+	}, "\n")
+	if strings.TrimSpace(out.String()) != want {
+		t.Fatalf("got output %q", out.String())
+	}
+}
+
+func TestRunDaemonOnceOutputStreamsActions(t *testing.T) {
+	rules, err := compileRules(Rules{{
+		Name:   "Delete all",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {`Spam`}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	_, err = runDaemonOnceReportOutput(context.Background(), DaemonConfig{Timeout: time.Minute}, rules, func(context.Context) ([]quarantineSpamMessage, error) {
+		return []quarantineSpamMessage{
+			{ID: "1", Subject: "Spam", EnvelopeSender: "first@example.com"},
+			{ID: "2", Subject: "Spam", EnvelopeSender: "second@example.com"},
+		}, nil
+	}, func(_ context.Context, id string, _ quarantineAction) error {
+		if id == "2" && !strings.Contains(out.String(), "Spam | 1") {
+			t.Fatalf("first action was not printed before second action, got %q", out.String())
+		}
+		return nil
+	}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "summary | total: 2 | deliver: 0 | delete: 2 | skip: 0 | errors: 0") {
+		t.Fatalf("got output %q", out.String())
 	}
 }
 

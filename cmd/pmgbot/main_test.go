@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,7 +157,7 @@ func TestRootWithoutSubcommandDoesNotRunOneCycle(t *testing.T) {
 	originalRunOnce := runOnce
 	t.Cleanup(func() { runOnce = originalRunOnce })
 
-	runOnce = func(_ context.Context, config pmgbot.DaemonConfig) error {
+	runOnce = func(_ context.Context, config pmgbot.DaemonConfig, _ io.Writer) error {
 		t.Fatalf("root command must not run one cycle, got config %#v", config)
 		return nil
 	}
@@ -234,28 +235,49 @@ func TestRunCommandRunsOneCycle(t *testing.T) {
 	t.Cleanup(func() { runOnce = originalRunOnce })
 
 	var called bool
-	runOnce = func(_ context.Context, config pmgbot.DaemonConfig) error {
+	runOnce = func(_ context.Context, config pmgbot.DaemonConfig, output io.Writer) error {
 		called = true
 		if config.Timeout != defaultDaemonTimeout {
 			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
 		}
-		return nil
+		slog.Info("run action log", "id", "id", "action", "delete")
+		_, err := io.WriteString(output, "id | [delete:Rule] | sender@example.com | From | receiver@example.com | Subject\n---\nsummary | total: 1 | deliver: 0 | delete: 1 | skip: 0 | errors: 0\n")
+		return err
 	}
 
-	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
-	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "pmgbot.yaml")
+	logPath := filepath.Join(tmpDir, "pmgbot.json")
+	config := defaultFileConfig(time.Now())
+	config.LogPath = logPath
+	if err := pmgbot.SaveFileConfig(configPath, config); err != nil {
 		t.Fatal(err)
 	}
 
 	root := rootCmd()
 	root.SetArgs([]string{"--config", configPath, "run"})
-	root.SetOut(io.Discard)
-	root.SetErr(io.Discard)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
 		t.Fatal("expected run command to run one cycle")
+	}
+	if !strings.Contains(out.String(), "summary | total: 1 | deliver: 0 | delete: 1 | skip: 0 | errors: 0") {
+		t.Fatalf("got output %q", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("run must not write logs to stderr, got %q", errOut.String())
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), `"msg":"run action log"`) || !strings.Contains(string(logData), `"action":"delete"`) {
+		t.Fatalf("got log file %q", string(logData))
 	}
 }
 
@@ -271,7 +293,7 @@ func TestRunCommandUsesOverrideConfigWhenDefaultMissing(t *testing.T) {
 	}
 
 	var called bool
-	runOnce = func(_ context.Context, config pmgbot.DaemonConfig) error {
+	runOnce = func(_ context.Context, config pmgbot.DaemonConfig, _ io.Writer) error {
 		called = true
 		if config.Timeout != 7*time.Minute {
 			t.Fatalf("got timeout %s, want 7m0s", config.Timeout)
@@ -296,12 +318,14 @@ func TestCheckCommandRunsDryRun(t *testing.T) {
 	t.Cleanup(func() { runCheck = originalRunCheck })
 
 	var called bool
-	runCheck = func(_ context.Context, config pmgbot.DaemonConfig) error {
+	runCheck = func(_ context.Context, config pmgbot.DaemonConfig, output io.Writer) error {
 		called = true
 		if config.Timeout != defaultDaemonTimeout {
 			t.Fatalf("got timeout %s, want %s", config.Timeout, defaultDaemonTimeout)
 		}
-		return nil
+		slog.Info("this log must not be printed by check")
+		_, err := io.WriteString(output, "delete-id | [delete:Delete spam] | bad@example.com | Bad | user@example.com | Lottery\n---\nsummary | total: 2 | deliver: 0 | delete: 1 | skip: 1 | errors: 0\n")
+		return err
 	}
 
 	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
@@ -311,13 +335,21 @@ func TestCheckCommandRunsDryRun(t *testing.T) {
 
 	root := rootCmd()
 	root.SetArgs([]string{"--config", configPath, "check"})
-	root.SetOut(io.Discard)
-	root.SetErr(io.Discard)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !called {
 		t.Fatal("expected check command to run dry-run")
+	}
+	if !strings.Contains(out.String(), "delete-id | [delete:Delete spam]") || !strings.Contains(out.String(), "summary | total: 2 | deliver: 0 | delete: 1 | skip: 1 | errors: 0") {
+		t.Fatalf("got output %q", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("check must not write logs to stderr, got %q", errOut.String())
 	}
 }
 
@@ -334,7 +366,7 @@ func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 		if minCount != 3 {
 			t.Fatalf("got min count %d, want 3", minCount)
 		}
-		_, err := io.WriteString(output, "sender@example.com - Subject - 2\n")
+		_, err := io.WriteString(output, "sender@example.com | Subject | 2\n")
 		return err
 	}
 
@@ -354,7 +386,7 @@ func TestAnalyzeCommandRunsSpamAnalysis(t *testing.T) {
 	if !called {
 		t.Fatal("expected analyze command to run spam analysis")
 	}
-	if !strings.Contains(out.String(), "sender@example.com - Subject - 2") {
+	if !strings.Contains(out.String(), "sender@example.com | Subject | 2") {
 		t.Fatalf("got output %q", out.String())
 	}
 }
@@ -384,7 +416,7 @@ func TestAnalyzeCommandRunsSpamJSONAnalysis(t *testing.T) {
 		if minCount != 4 {
 			t.Fatalf("got min count %d, want 4", minCount)
 		}
-		_, err := io.WriteString(output, "Subject - 2\n")
+		_, err := io.WriteString(output, "Subject | 2\n")
 		return err
 	}
 
@@ -404,7 +436,7 @@ func TestAnalyzeCommandRunsSpamJSONAnalysis(t *testing.T) {
 	if !called {
 		t.Fatal("expected analyze --json command to run json analysis")
 	}
-	if !strings.Contains(out.String(), "Subject - 2") {
+	if !strings.Contains(out.String(), "Subject | 2") {
 		t.Fatalf("got output %q", out.String())
 	}
 }

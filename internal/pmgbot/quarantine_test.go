@@ -474,6 +474,52 @@ func TestDecideQuarantineActionMatchesInvertedPattern(t *testing.T) {
 	}
 }
 
+func TestDecideQuarantineActionMatchesEmojiSubjectRule(t *testing.T) {
+	rules, err := compileRules(Rules{
+		{
+			Name:   "Delete emoji subject prefixes",
+			Action: quarantineActionDelete,
+			When: RuleGroups{{
+				"subject": {
+					`^(?:\[SPAM\]:\s*)?\p{So}`,
+					`\p{So}[\p{Mn}\p{Me}\p{Sk}]*\s*$`,
+				},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		subject string
+		wantOK  bool
+	}{
+		{name: "starts with emoji", subject: "🚨 Сегодня практикум", wantOK: true},
+		{name: "spam prefix then emoji", subject: "[SPAM]: 🚨 Сегодня практикум", wantOK: true},
+		{name: "ends with emoji", subject: "Сегодня практикум 🚨", wantOK: true},
+		{name: "ends with emoji and spaces", subject: "Сегодня практикум 🚨   ", wantOK: true},
+		{name: "ends with variation selector emoji", subject: "Внимание ⚠️", wantOK: true},
+		{name: "ends with heart variation selector", subject: "Спасибо ❤️", wantOK: true},
+		{name: "ends with skin tone emoji", subject: "Подтвердите 👍🏽", wantOK: true},
+		{name: "emoji in middle only", subject: "Сегодня 🚨 практикум"},
+		{name: "no emoji", subject: "Сегодня практикум"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ruleName, ok := decideQuarantineAction(quarantineSpamMessage{Subject: tt.subject}, rules)
+			if ok != tt.wantOK {
+				t.Fatalf("got ok %v, want %v", ok, tt.wantOK)
+			}
+			if ok && (got != quarantineActionDelete || ruleName != "Delete emoji subject prefixes") {
+				t.Fatalf("got action %q rule %q, want delete rule name", got, ruleName)
+			}
+		})
+	}
+}
+
 func TestDecideQuarantineActionMatchesCountCondition(t *testing.T) {
 	rules, err := compileRules(Rules{
 		{

@@ -59,6 +59,20 @@ func TestCompileRulesAcceptsCountCondition(t *testing.T) {
 	}
 }
 
+func TestCompileRulesAcceptsSameValuePattern(t *testing.T) {
+	rules, err := compileRules(Rules{{
+		Name:   "Delete repeated subjects",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {sameValuePattern}, "count": {"3"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rules[0].When[0].Patterns["subject"][0].Same {
+		t.Fatalf("got patterns %#v, want same value pattern", rules[0].When[0].Patterns)
+	}
+}
+
 func TestCompileRulesAcceptsCountOperators(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -532,6 +546,35 @@ func TestDecideQuarantineActionMatchesCountOperators(t *testing.T) {
 				t.Fatalf("got ok %v, want %v", ok, tt.want)
 			}
 		})
+	}
+}
+
+func TestDecideQuarantineActionMatchesSameSubjectCount(t *testing.T) {
+	rules, err := compileRules(Rules{{
+		Name:   "Delete repeated subjects",
+		Action: quarantineActionDelete,
+		When:   RuleGroups{{"subject": {sameValuePattern}, "count": {"3"}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	messages := []quarantineSpamMessage{
+		{ID: "1", Subject: "Repeated"},
+		{ID: "2", Subject: "Repeated"},
+		{ID: "3", Subject: "Repeated"},
+		{ID: "4", Subject: "Rare"},
+		{ID: "5", Subject: "Rare"},
+	}
+
+	got, ruleName, ok := decideQuarantineActionForMessages(messages[0], messages, rules)
+	if !ok || got != quarantineActionDelete || ruleName != "Delete repeated subjects" {
+		t.Fatalf("got action %q rule %q ok %v", got, ruleName, ok)
+	}
+
+	_, _, ok = decideQuarantineActionForMessages(messages[3], messages, rules)
+	if ok {
+		t.Fatal("expected subject repeated only twice not to match")
 	}
 }
 

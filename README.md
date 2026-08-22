@@ -76,11 +76,16 @@ Output format:
 
 ```text
 subject - count - script - lang
-envelope_sender - from - count
+envelope_sender - from - count - action
 ---
 next subject - count - script - lang
-next envelope_sender - next from - count
+next envelope_sender - next from - count - action
+---
+summary - total: 10 - deliver: 2 - delete: 3 - remain: 5
 ```
+
+Sender action is `skip` when no rule matches, or `[delete:RULE_NAME]` / `[deliver:RULE_NAME]` when a rule matches.
+The summary is calculated across all loaded spam messages, not only subjects shown after `--min-count` filtering.
 
 Run continuously as a daemon:
 
@@ -118,6 +123,8 @@ rules:
   #   которые подходят под остальные условия этой же группы.
   #   Поддерживаются операторы: 3 или '>=3', '>3', '<3', '<=3'.
   #   Минимальное значение count: 1.
+  # - pattern '[===]' сравнивает поле со значением этого же поля у текущего письма.
+  #   Например subject: '[===]' + count: 3 = темы, повторившиеся 3 или больше раз.
   # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
 
   # Один field + несколько regexp: subject A ИЛИ subject B.
@@ -138,13 +145,16 @@ rules:
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
 
   # Примеры count:
+  # - subject: '[===]' + count: 3 = 3 или больше писем с такой же темой;
   # - count: 3 или '>=3' = 3 или больше таких писем;
   # - count: '>3' = больше 3 таких писем;
   # - count: '<3' = меньше 3 таких писем;
   # - count: '<=3' = 3 или меньше таких писем.
-  - name: Delete TEST subjects by count examples
+  - name: Delete repeated subjects by count examples
     action: delete
     when:
+      - subject: '[===]'
+        count: 3
       - subject: '^TEST_GE$'
         count: '>=3'
       - subject: '^TEST_GT$'
@@ -190,6 +200,8 @@ Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare nu
 
 `count` is a special condition-group key, not a PMG message field and not a regexp. When present, it compares the number of messages in the current spam load that match the other fields in the same `when` group. If `count` is omitted, it does not affect matching.
 
+`[===]` is a special pattern value. It compares a field with the same field of the current message instead of compiling a regexp. For example, `subject: '[===]'` means "same subject as the current message". Combined with `count`, it can match repeated values in the current spam load.
+
 The minimum `count` value is `1`. A bare number means `>=N`. Quote operator values in YAML, especially values starting with `>` or `<`.
 
 Supported `count` forms:
@@ -225,13 +237,26 @@ rules:
         count: 3
 ```
 
+This rule deletes messages when their subject appears at least 3 times in the current spam load. This is the rule equivalent of `analyze --min-count 3` by subject:
+
+```yaml
+rules:
+  - name: Delete repeated subjects
+    action: delete
+    when:
+      - subject: '[===]'
+        count: 3
+```
+
 These rules show strict and non-strict count comparisons:
 
 ```yaml
 rules:
-  - name: Delete TEST subjects by count examples
+  - name: Delete repeated subjects by count examples
     action: delete
     when:
+      - subject: '[===]'
+        count: 3
       - subject: '^TEST_GE$'
         count: '>=3'
       - subject: '^TEST_GT$'
@@ -316,6 +341,8 @@ The `id` is the quarantine API ID returned by `/quarantine/spam`.
 ## Regexp Examples
 
 Rule patterns use Go `regexp` syntax, also known as RE2 regular expression syntax. Useful basics: `.*` means any characters, `\.` means a literal dot, `^` means start of string, `$` means end of string, and `(?i)` enables case-insensitive matching. The pmgbot-specific inversion prefix is `[!]`; it is not part of Go regexp syntax and is stripped before compiling the regexp.
+
+The pmgbot-specific same-value token is `[===]`; it is not part of Go regexp syntax and is handled before regexp compilation. Use it when a field should match the same field value as the current message, usually together with `count`.
 
 ### Inversion
 

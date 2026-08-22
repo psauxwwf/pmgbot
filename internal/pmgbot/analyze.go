@@ -30,6 +30,13 @@ type spamAnalysisSenderKey struct {
 	Action         string
 }
 
+type spamAnalysisSummary struct {
+	Total   int
+	Deliver int
+	Delete  int
+	Remain  int
+}
+
 func Analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer) error {
 	return analyze(ctx, config, minCount, output, pmgQuarantineSpamContext)
 }
@@ -48,7 +55,7 @@ func AnalyzeSpamJSON(_ context.Context, config DaemonConfig, path string, minCou
 		return err
 	}
 
-	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules))
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules), analyzeSpamSummary(messages, rules))
 }
 
 func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.Writer, quarantineSpam quarantineSpamFunc) error {
@@ -67,10 +74,10 @@ func analyze(ctx context.Context, config DaemonConfig, minCount int, output io.W
 		return err
 	}
 
-	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules))
+	return writeSpamAnalysis(output, analyzeSpamMessages(messages, minCount, rules), analyzeSpamSummary(messages, rules))
 }
 
-func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
+func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow, summary spamAnalysisSummary) error {
 	for i, row := range rows {
 		if _, err := fmt.Fprintf(output, "%s - %d - %s - %s\n", row.Subject, row.Count, row.Script, row.Language); err != nil {
 			return fmt.Errorf("write spam analysis: %w", err)
@@ -86,8 +93,38 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow) error {
 			}
 		}
 	}
+	if len(rows) > 0 {
+		if _, err := fmt.Fprintln(output, "---"); err != nil {
+			return fmt.Errorf("write spam analysis: %w", err)
+		}
+	}
+	if _, err := fmt.Fprintf(output, "summary - total: %d - deliver: %d - delete: %d - remain: %d\n", summary.Total, summary.Deliver, summary.Delete, summary.Remain); err != nil {
+		return fmt.Errorf("write spam analysis: %w", err)
+	}
 
 	return nil
+}
+
+func analyzeSpamSummary(messages []quarantineSpamMessage, rules []compiledRule) spamAnalysisSummary {
+	summary := spamAnalysisSummary{Total: len(messages)}
+	for _, message := range messages {
+		action, _, ok := decideQuarantineActionForMessages(message, messages, rules)
+		if !ok {
+			summary.Remain++
+			continue
+		}
+
+		switch action {
+		case quarantineActionDeliver:
+			summary.Deliver++
+		case quarantineActionDelete:
+			summary.Delete++
+		default:
+			summary.Remain++
+		}
+	}
+
+	return summary
 }
 
 func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules []compiledRule) []spamAnalysisRow {
@@ -154,10 +191,10 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules [
 }
 
 func spamAnalysisMessageAction(message quarantineSpamMessage, messages []quarantineSpamMessage, rules []compiledRule) string {
-	action, _, ok := decideQuarantineActionForMessages(message, messages, rules)
+	action, ruleName, ok := decideQuarantineActionForMessages(message, messages, rules)
 	if !ok {
 		return "skip"
 	}
 
-	return string(action)
+	return fmt.Sprintf("[%s:%s]", action, ruleName)
 }

@@ -16,6 +16,8 @@ rules:
   #   которые подходят под остальные условия этой же группы.
   #   Поддерживаются операторы: 3 или '>=3', '>3', '<3', '<=3'.
   #   Минимальное значение count: 1.
+  # - pattern '[===]' сравнивает поле со значением этого же поля у текущего письма.
+  #   Например subject: '[===]' + count: 3 = темы, повторившиеся 3 или больше раз.
   # Пример: "- from: A; receiver: [B, C]" = from A И (receiver B ИЛИ receiver C).
 
   # === 1. Самые простые правила ===
@@ -71,13 +73,16 @@ rules:
           - '^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$'
 
   # Примеры count:
+  # - subject: '[===]' + count: 3 = 3 или больше писем с такой же темой;
   # - count: 3 или '>=3' = 3 или больше таких писем;
   # - count: '>3' = больше 3 таких писем;
   # - count: '<3' = меньше 3 таких писем;
   # - count: '<=3' = 3 или меньше таких писем.
-  - name: Delete TEST subjects by count examples
+  - name: Delete repeated subjects by count examples
     action: delete
     when:
+      - subject: '[===]'
+        count: 3
       - subject: '^TEST_GE$'
         count: '>=3'
       - subject: '^TEST_GT$'

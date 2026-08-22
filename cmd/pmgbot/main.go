@@ -330,9 +330,10 @@ func defaultFileConfig(_ time.Time) pmgbot.FileConfig {
 				}},
 			},
 			{
-				Name:   "Delete TEST subjects by count examples",
+				Name:   "Delete repeated subjects by count examples",
 				Action: "delete",
 				When: pmgbot.RuleGroups{
+					{"subject": {`[===]`}, "count": {"3"}},
 					{"subject": {`^TEST_GE$`}, "count": {">=3"}},
 					{"subject": {`^TEST_GT$`}, "count": {">3"}},
 					{"subject": {`^TEST_LE$`}, "count": {"<=3"}},

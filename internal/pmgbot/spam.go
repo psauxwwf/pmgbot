@@ -18,6 +18,7 @@ type quarantineSpamMessage = pmg.SpamMessage
 type compiledPattern struct {
 	Regexp   *regexp.Regexp
 	Inverted bool
+	Same     bool
 }
 
 type compiledFieldPatterns map[string][]compiledPattern
@@ -48,6 +49,7 @@ const (
 	quarantineActionDeliver quarantineAction = "deliver"
 	quarantineActionDelete  quarantineAction = "delete"
 	invertedPatternPrefix   string           = "[!]"
+	sameValuePattern        string           = "[===]"
 	ruleCountField          string           = "count"
 	countEqualOrGreater     countOperator    = ">="
 	countGreater            countOperator    = ">"
@@ -85,6 +87,11 @@ func compileFieldPatterns(action string, patterns FieldPatterns) (compiledFieldP
 		for _, pattern := range fieldPatterns {
 			pattern = strings.TrimSpace(pattern)
 			if pattern == "" || slices.Contains(seen, pattern) {
+				continue
+			}
+			if pattern == sameValuePattern {
+				seen = append(seen, pattern)
+				compiled[field] = append(compiled[field], compiledPattern{Same: true})
 				continue
 			}
 
@@ -221,14 +228,14 @@ func matchRuleGroups(message quarantineSpamMessage, groups compiledRuleGroups, m
 }
 
 func matchRuleGroup(message quarantineSpamMessage, group compiledRuleGroup, messages []quarantineSpamMessage) bool {
-	if !matchFieldPatternGroup(message, group.Patterns) {
+	if !matchFieldPatternGroup(message, message, group.Patterns) {
 		return false
 	}
 	if !group.Count.Enabled() {
 		return true
 	}
 
-	return group.Count.Matches(countMatchingMessages(messages, group.Patterns))
+	return group.Count.Matches(countMatchingMessages(message, messages, group.Patterns))
 }
 
 func (condition countCondition) Enabled() bool {
@@ -248,10 +255,10 @@ func (condition countCondition) Matches(count int) bool {
 	}
 }
 
-func countMatchingMessages(messages []quarantineSpamMessage, patterns compiledFieldPatterns) int {
+func countMatchingMessages(reference quarantineSpamMessage, messages []quarantineSpamMessage, patterns compiledFieldPatterns) int {
 	var count int
 	for _, message := range messages {
-		if matchFieldPatternGroup(message, patterns) {
+		if matchFieldPatternGroup(message, reference, patterns) {
 			count++
 		}
 	}
@@ -259,7 +266,7 @@ func countMatchingMessages(messages []quarantineSpamMessage, patterns compiledFi
 	return count
 }
 
-func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFieldPatterns) bool {
+func matchFieldPatternGroup(message quarantineSpamMessage, reference quarantineSpamMessage, patterns compiledFieldPatterns) bool {
 	if len(patterns) == 0 {
 		return false
 	}
@@ -269,10 +276,14 @@ func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFiel
 		if !ok || text == "" {
 			return false
 		}
+		referenceText, ok := quarantineMessageFieldString(reference, field)
+		if !ok || referenceText == "" {
+			return false
+		}
 
 		var matched bool
 		for _, pattern := range fieldPatterns {
-			if pattern.Matches(text) {
+			if pattern.Matches(text, referenceText) {
 				matched = true
 				break
 			}
@@ -285,7 +296,11 @@ func matchFieldPatternGroup(message quarantineSpamMessage, patterns compiledFiel
 	return true
 }
 
-func (pattern compiledPattern) Matches(text string) bool {
+func (pattern compiledPattern) Matches(text string, referenceText string) bool {
+	if pattern.Same {
+		return text == referenceText
+	}
+
 	matched := pattern.Regexp.MatchString(text)
 	if pattern.Inverted {
 		return !matched

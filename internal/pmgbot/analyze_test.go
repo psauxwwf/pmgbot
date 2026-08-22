@@ -108,8 +108,10 @@ func TestAnalyzeWritesRows(t *testing.T) {
 
 	want := strings.Join([]string{
 		"Weekly air shipment documents are ready for review - 3 - latin - en",
-		"sender@example.com - Sender <sender@example.com> - 2 - delete",
-		"other@example.com - Other <other@example.com> - 1 - deliver",
+		"sender@example.com - Sender <sender@example.com> - 2 - [delete:Delete sender]",
+		"other@example.com - Other <other@example.com> - 1 - [deliver:Deliver other]",
+		"---",
+		"summary - total: 4 - deliver: 2 - delete: 2 - remain: 0",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())
@@ -122,14 +124,9 @@ func TestAnalyzeWritesActionsWithCountCondition(t *testing.T) {
 		Timeout: time.Minute,
 		Rules: Rules{
 			{
-				Name:   "Delete repeated subject",
+				Name:   "Delete repeated subjects",
 				Action: quarantineActionDelete,
-				When:   RuleGroups{{"subject": {`^Repeated$`}, "count": {"2"}}},
-			},
-			{
-				Name:   "Delete rare subject",
-				Action: quarantineActionDelete,
-				When:   RuleGroups{{"subject": {`^Rare$`}, "count": {"2"}}},
+				When:   RuleGroups{{"subject": {sameValuePattern}, "count": {"2"}}},
 			},
 		},
 	}, 1, &out, func(context.Context) ([]quarantineSpamMessage, error) {
@@ -145,9 +142,10 @@ func TestAnalyzeWritesActionsWithCountCondition(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"sender@example.com - Sender <sender@example.com> - 1 - delete",
-		"other@example.com - Other <other@example.com> - 1 - delete",
+		"sender@example.com - Sender <sender@example.com> - 1 - [delete:Delete repeated subjects]",
+		"other@example.com - Other <other@example.com> - 1 - [delete:Delete repeated subjects]",
 		"rare@example.com - Rare <rare@example.com> - 1 - skip",
+		"summary - total: 3 - deliver: 0 - delete: 2 - remain: 1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output %q does not contain %q", got, want)
@@ -172,6 +170,8 @@ done`
 	want := strings.Join([]string{
 		"Уведомление о поступлении новых электронных документов - 2 - cyrillic - ru",
 		"sender@example.com - Sender <sender@example.com> - 2 - skip",
+		"---",
+		"summary - total: 3 - deliver: 0 - delete: 0 - remain: 3",
 	}, "\n")
 	if strings.TrimSpace(out.String()) != want {
 		t.Fatalf("got output %q", out.String())

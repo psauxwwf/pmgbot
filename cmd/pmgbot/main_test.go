@@ -134,7 +134,7 @@ func TestConfigDefault(t *testing.T) {
 	if config.Rules[5].Name != "Delete webmaster registration or payment confirmations" || config.Rules[5].When[0]["subject"][1] != `^\[SPAM\]: Платеж .* на сумму .* руб\. подтвержден$` {
 		t.Fatalf("got rules %#v", config.Rules)
 	}
-	if config.Rules[6].Name != "Delete TEST subjects by count examples" || config.Rules[6].When[0]["count"][0] != ">=3" || config.Rules[6].When[3]["count"][0] != "<3" {
+	if config.Rules[6].Name != "Delete repeated subjects by count examples" || config.Rules[6].When[0]["subject"][0] != "[===]" || config.Rules[6].When[0]["count"][0] != "3" || config.Rules[6].When[4]["count"][0] != "<3" {
 		t.Fatalf("got rules %#v", config.Rules)
 	}
 	if config.Rules[15].Name != "Delete mixed phishing campaign" || len(config.Rules[15].When) != 2 {

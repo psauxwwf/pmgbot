@@ -105,9 +105,9 @@ func TestCheckDoesNotApplyActions(t *testing.T) {
 
 func TestRunDaemonOnceHonorsCountCondition(t *testing.T) {
 	rules, err := compileRules(Rules{{
-		Name:   "Delete repeated subject",
+		Name:   "Delete repeated subjects",
 		Action: quarantineActionDelete,
-		When:   RuleGroups{{"subject": {`^TEST$`}, "count": {"3"}}},
+		When:   RuleGroups{{"subject": {sameValuePattern}, "count": {"3"}}},
 	}})
 	if err != nil {
 		t.Fatal(err)

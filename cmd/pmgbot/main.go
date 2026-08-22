@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultDaemonEvery   = 15 * time.Minute
+	defaultDaemonCron    = "0 8 * * *"
 	defaultDaemonTimeout = 10 * time.Minute
 	defaultConfigPath    = "pmgbot.yaml"
 	overrideConfigPath   = "pmgbot.override.yaml"
@@ -283,7 +283,7 @@ func defaultFileConfig(_ time.Time) pmgbot.FileConfig {
 		LogPath:  "",
 		Sudo:     true,
 		Daemon: pmgbot.FileDaemonConfig{
-			Every:   pmgbot.Duration(defaultDaemonEvery),
+			Cron:    defaultDaemonCron,
 			Timeout: pmgbot.Duration(defaultDaemonTimeout),
 		},
 		Rules: pmgbot.Rules{

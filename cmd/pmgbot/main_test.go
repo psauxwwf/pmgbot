@@ -116,8 +116,8 @@ func TestConfigDefault(t *testing.T) {
 	if !config.Sudo {
 		t.Fatal("default config sudo must be enabled")
 	}
-	if time.Duration(config.Daemon.Every) != defaultDaemonEvery {
-		t.Fatalf("got daemon every %s, want %s", time.Duration(config.Daemon.Every), defaultDaemonEvery)
+	if config.Daemon.Cron != defaultDaemonCron {
+		t.Fatalf("got daemon cron %q, want %q", config.Daemon.Cron, defaultDaemonCron)
 	}
 	if time.Duration(config.Daemon.Timeout) != defaultDaemonTimeout {
 		t.Fatalf("got daemon timeout %s, want %s", time.Duration(config.Daemon.Timeout), defaultDaemonTimeout)

@@ -2,7 +2,7 @@ log_level: info
 log_path: ""
 sudo: true
 daemon:
-  every: 15m0s
+  cron: "0 8 * * *"
   timeout: 10m0s
 
 rules:

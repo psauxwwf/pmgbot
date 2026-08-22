@@ -18,7 +18,7 @@ sudo pmgsh get /quarantine/spam --starttime $(date --date='-30 days' +%s) --endt
 3. Matches every quarantine message against `rules` from top to bottom.
 4. Applies the first matching rule action by quarantine message ID.
 5. Skips messages that do not match any rule.
-6. Waits for `daemon.every` and repeats the cycle.
+6. Waits for the next `daemon.cron` schedule and repeats the cycle.
 
 If multiple rules match one message, the first rule in `rules` wins.
 
@@ -110,7 +110,7 @@ log_level: info
 log_path: ""
 sudo: true
 daemon:
-  every: 15m0s
+  cron: "0 8 * * *"
   timeout: 10m0s
 rules:
   # Важно про логику списков:
@@ -184,7 +184,7 @@ Fields:
 - `log_level`: log level, supports `debug`, `info`, `warn`, and `error`.
 - `log_path`: path to a JSON log file; if empty, logs are written only to stderr.
 - `sudo`: run external commands through `sudo`.
-- `daemon.every`: how often to run the daemon cycle.
+- `daemon.cron`: cron schedule for daemon cycles; the default `0 8 * * *` runs once per day at 08:00.
 - `daemon.timeout`: timeout for each PMG operation phase.
 - `rules`: ordered list of named matching rules.
 - `rules[].name`: human-readable rule name used in logs.
@@ -192,7 +192,7 @@ Fields:
 - `rules[].when`: condition groups for this rule.
 - `rules[].when[].count`: optional comparison against the number of messages in the current spam load that match the other fields in the same condition group.
 
-Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.every` is used only by `pmgbot daemon`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` logs only matching messages with the action that would be applied, but does not deliver or delete anything.
+Durations use Go duration syntax, for example `30m`, `1h`, or `10m0s`. A bare number is treated as minutes. `daemon.cron` uses standard 5-field cron syntax by default, for example `0 8 * * *` for every day at 08:00; 6-field cron with seconds is also accepted. `pmgbot daemon` runs one cycle immediately at startup and then follows `daemon.cron`; `pmgbot run --config pmgbot.yaml` runs a single cycle immediately and exits. `pmgbot check --config pmgbot.yaml` logs only matching messages with the action that would be applied, but does not deliver or delete anything.
 
 ## Matching Fields
 

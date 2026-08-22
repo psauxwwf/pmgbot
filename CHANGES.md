@@ -14,6 +14,7 @@
 - Added `--min-count` for `analyze` to filter subjects by their total message count across all senders.
 - Changed `analyze` matched action output to include the rule name as `[delete:RULE_NAME]` or `[deliver:RULE_NAME]`.
 - Added final `analyze` summary with total, deliver, delete, and remaining message counts.
+- Replaced `daemon.every` interval scheduling with `daemon.cron` scheduling through go-co-op/gocron; default schedule is daily at 08:00 (`0 8 * * *`).
 - Added `[!]` regexp inversion for individual rule patterns, for example `subject: '[!]Mail Delivery'`.
 - Added optional `count` in rule condition groups to require a minimum number of current spam messages matching the other fields in the same group.
 - Added `count` comparison operators: `>N`, `<N`, `>=N`, and `<=N`; a bare `N` means `>=N`, and the minimum accepted value is `1`.

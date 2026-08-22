@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
+	"strings"
+
+	"github.com/go-co-op/gocron/v2"
 )
 
 type quarantineSpamFunc func(context.Context) ([]quarantineSpamMessage, error)
@@ -36,8 +38,9 @@ func Check(ctx context.Context, config DaemonConfig) error {
 }
 
 func Daemon(ctx context.Context, config DaemonConfig) error {
-	if config.Every <= 0 {
-		return fmt.Errorf("daemon every must be greater than zero")
+	jobDefinition, scheduleText, err := daemonJobDefinition(config)
+	if err != nil {
+		return err
 	}
 	if config.Timeout <= 0 {
 		return fmt.Errorf("daemon timeout must be greater than zero")
@@ -48,36 +51,59 @@ func Daemon(ctx context.Context, config DaemonConfig) error {
 	}
 
 	slog.Info("starting pmgbot daemon",
-		"every", config.Every.String(),
+		"schedule", scheduleText,
 		"timeout", config.Timeout.String(),
 		"rules", len(rules),
 	)
 
-	for {
-		if err := runDaemonOnce(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext); err != nil {
-			slog.Error("pmgbot daemon cycle failed", "error", err)
-		} else {
-			slog.Info("pmgbot daemon cycle completed")
-		}
-		if ctx.Err() != nil {
-			slog.Info("stopping pmgbot daemon", "reason", ctx.Err())
-			return nil
-		}
-
-		timer := time.NewTimer(config.Every)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			slog.Info("stopping pmgbot daemon", "reason", ctx.Err())
-			return nil
-		case <-timer.C:
-		}
+	scheduler, err := gocron.NewScheduler()
+	if err != nil {
+		return fmt.Errorf("create scheduler: %w", err)
 	}
+	if _, err := scheduler.NewJob(
+		jobDefinition,
+		gocron.NewTask(func() {
+			if err := runDaemonOnce(ctx, config, rules, pmgQuarantineSpamContext, pmgApplyQuarantineActionContext); err != nil {
+				slog.Error("pmgbot daemon cycle failed", "error", err)
+			} else {
+				slog.Info("pmgbot daemon cycle completed")
+			}
+		}),
+		gocron.WithSingletonMode(gocron.LimitModeReschedule),
+		gocron.WithStartAt(gocron.WithStartImmediately()),
+	); err != nil {
+		return fmt.Errorf("schedule pmgbot daemon: %w", err)
+	}
+
+	scheduler.Start()
+	<-ctx.Done()
+	slog.Info("stopping pmgbot daemon", "reason", ctx.Err())
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	defer cancel()
+	if err := scheduler.ShutdownWithContext(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown scheduler: %w", err)
+	}
+
+	return nil
+}
+
+func daemonJobDefinition(config DaemonConfig) (gocron.JobDefinition, string, error) {
+	cron := strings.TrimSpace(config.Cron)
+	if cron != "" {
+		return gocron.CronJob(cron, cronIncludesSeconds(cron)), "cron " + cron, nil
+	}
+
+	return nil, "", fmt.Errorf("daemon cron must not be empty")
+}
+
+func cronIncludesSeconds(cron string) bool {
+	fields := strings.Fields(cron)
+	if len(fields) > 0 && (strings.HasPrefix(fields[0], "TZ=") || strings.HasPrefix(fields[0], "CRON_TZ=")) {
+		fields = fields[1:]
+	}
+
+	return len(fields) == 6
 }
 
 func compileDaemonRules(config DaemonConfig) ([]compiledRule, error) {

@@ -15,7 +15,7 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		LogPath:  "pmgbot.log",
 		Sudo:     true,
 		Daemon: FileDaemonConfig{
-			Every:   Duration(15 * time.Minute),
+			Cron:    "0 8 * * *",
 			Timeout: Duration(2 * time.Minute),
 		},
 		Rules: Rules{
@@ -48,8 +48,8 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	if loaded.LogLevel != config.LogLevel {
 		t.Fatalf("got log level %q, want %q", loaded.LogLevel, config.LogLevel)
 	}
-	if time.Duration(loaded.Daemon.Every) != 15*time.Minute {
-		t.Fatalf("got daemon every %s, want 15m", time.Duration(loaded.Daemon.Every))
+	if loaded.Daemon.Cron != "0 8 * * *" {
+		t.Fatalf("got daemon cron %q, want daily 08:00", loaded.Daemon.Cron)
 	}
 	if time.Duration(loaded.Daemon.Timeout) != 2*time.Minute {
 		t.Fatalf("got daemon timeout %s, want 2m", time.Duration(loaded.Daemon.Timeout))
@@ -75,7 +75,7 @@ func TestFileConfigRejectsRuleWhenMap(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`daemon:`,
-		`  every: 15m`,
+		`  cron: "0 8 * * *"`,
 		`  timeout: 1m`,
 		`rules:`,
 		`  - name: Delete bad`,
@@ -105,7 +105,7 @@ func TestFileConfigLoadsRulesWithAndFields(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`daemon:`,
-		`  every: 15m`,
+		`  cron: "0 8 * * *"`,
 		`  timeout: 1m`,
 		`rules:`,
 		`  - name: Delete webmaster registration`,
@@ -145,7 +145,7 @@ func TestFileConfigLoadsRuleCountCondition(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`daemon:`,
-		`  every: 15m`,
+		`  cron: "0 8 * * *"`,
 		`  timeout: 1m`,
 		`rules:`,
 		`  - name: Delete repeated subject`,
@@ -173,7 +173,7 @@ func TestFileConfigLoadsAndSavesRuleCountOperator(t *testing.T) {
 		LogLevel: "info",
 		Sudo:     true,
 		Daemon: FileDaemonConfig{
-			Every:   Duration(15 * time.Minute),
+			Cron:    "0 8 * * *",
 			Timeout: Duration(time.Minute),
 		},
 		Rules: Rules{{
@@ -210,7 +210,7 @@ func TestDurationUnmarshalError(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`daemon:`,
-		`  every: 15m`,
+		`  cron: "0 8 * * *"`,
 		`  timeout: nope`,
 		`rules: []`,
 	}, "\n")
@@ -241,8 +241,8 @@ func TestDurationUnmarshalUsesMinutesForBareNumber(t *testing.T) {
 		`log_path: ""`,
 		`sudo: true`,
 		`daemon:`,
-		`  every: 15`,
-		`  timeout: 1m`,
+		`  cron: "0 8 * * *"`,
+		`  timeout: 15`,
 		`rules: []`,
 	}, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -253,7 +253,7 @@ func TestDurationUnmarshalUsesMinutesForBareNumber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if time.Duration(config.Daemon.Every) != 15*time.Minute {
-		t.Fatalf("got daemon every %s, want 15m", time.Duration(config.Daemon.Every))
+	if time.Duration(config.Daemon.Timeout) != 15*time.Minute {
+		t.Fatalf("got daemon timeout %s, want 15m", time.Duration(config.Daemon.Timeout))
 	}
 }

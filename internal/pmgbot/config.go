@@ -12,7 +12,7 @@ import (
 )
 
 type DaemonConfig struct {
-	Every   time.Duration
+	Cron    string
 	Timeout time.Duration
 	Rules   Rules
 }
@@ -26,7 +26,7 @@ type FileConfig struct {
 }
 
 type FileDaemonConfig struct {
-	Every   Duration `yaml:"every"`
+	Cron    string   `yaml:"cron"`
 	Timeout Duration `yaml:"timeout"`
 }
 
@@ -219,7 +219,7 @@ func SaveFileConfig(path string, config FileConfig) error {
 
 func (config FileConfig) DaemonConfig() DaemonConfig {
 	return DaemonConfig{
-		Every:   time.Duration(config.Daemon.Every),
+		Cron:    config.Daemon.Cron,
 		Timeout: time.Duration(config.Daemon.Timeout),
 		Rules:   config.Rules,
 	}

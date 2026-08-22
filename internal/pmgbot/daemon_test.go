@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-func TestDaemonValidatesEvery(t *testing.T) {
+func TestDaemonValidatesCron(t *testing.T) {
 	err := Daemon(context.Background(), DaemonConfig{
-		Every:   0,
 		Timeout: time.Minute,
 	})
 	if err == nil {
@@ -19,7 +18,7 @@ func TestDaemonValidatesEvery(t *testing.T) {
 
 func TestDaemonValidatesTimeout(t *testing.T) {
 	err := Daemon(context.Background(), DaemonConfig{
-		Every:   time.Minute,
+		Cron:    "0 8 * * *",
 		Timeout: 0,
 	})
 	if err == nil {
@@ -29,7 +28,7 @@ func TestDaemonValidatesTimeout(t *testing.T) {
 
 func TestDaemonValidatesRulePatterns(t *testing.T) {
 	err := Daemon(context.Background(), DaemonConfig{
-		Every:   time.Minute,
+		Cron:    "0 8 * * *",
 		Timeout: time.Minute,
 		Rules: Rules{
 			{
@@ -46,7 +45,7 @@ func TestDaemonValidatesRulePatterns(t *testing.T) {
 
 func TestDaemonValidatesRuleActions(t *testing.T) {
 	err := Daemon(context.Background(), DaemonConfig{
-		Every:   time.Minute,
+		Cron:    "0 8 * * *",
 		Timeout: time.Minute,
 		Rules: Rules{
 			{
@@ -61,9 +60,8 @@ func TestDaemonValidatesRuleActions(t *testing.T) {
 	}
 }
 
-func TestRunOnceDoesNotValidateEvery(t *testing.T) {
+func TestRunOnceDoesNotValidateCron(t *testing.T) {
 	err := runDaemonOnce(context.Background(), DaemonConfig{
-		Every:   0,
 		Timeout: time.Minute,
 	}, nil, func(context.Context) ([]quarantineSpamMessage, error) {
 		return nil, nil
@@ -71,7 +69,19 @@ func TestRunOnceDoesNotValidateEvery(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("expected one-shot run without daemon every, got %v", err)
+		t.Fatalf("expected one-shot run without daemon cron, got %v", err)
+	}
+}
+
+func TestCronIncludesSeconds(t *testing.T) {
+	if !cronIncludesSeconds("0 */15 * * * *") {
+		t.Fatal("expected six-field cron to include seconds")
+	}
+	if cronIncludesSeconds("*/15 * * * *") {
+		t.Fatal("expected five-field cron not to include seconds")
+	}
+	if !cronIncludesSeconds("CRON_TZ=Europe/Moscow 0 0 8 * * *") {
+		t.Fatal("expected six-field cron with timezone to include seconds")
 	}
 }
 

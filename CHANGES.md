@@ -19,3 +19,5 @@
 - Added optional `count` in rule condition groups to require a minimum number of current spam messages matching the other fields in the same group.
 - Added `count` comparison operators: `>N`, `<N`, `>=N`, and `<=N`; a bare `N` means `>=N`, and the minimum accepted value is `1`.
 - Added `[===]` same-value rule pattern, for example `subject: '[===]'` with `count: 3` matches subjects repeated at least three times in the current spam load.
+- Changed `analyze` sender rows to include quarantine message IDs; grouped rows print comma-separated IDs.
+- Added `pmgbot get --config <file> <ID>` to print detailed quarantine content as JSON with `raw` as the last field.

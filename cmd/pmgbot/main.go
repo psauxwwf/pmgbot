@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 
 	"pmgbot/internal/pmgbot"
 	pmgcmd "pmgbot/pkg/cmd"
+	"pmgbot/pkg/pmg"
 )
 
 const (
@@ -49,6 +51,7 @@ var (
 	runAnalyzeJSON  = pmgbot.AnalyzeSpamJSON
 	runGenerate     = pmgbot.GenerateRules
 	runGenerateJSON = pmgbot.GenerateRulesFromSpamJSON
+	runGet          = pmg.QuarantineContent
 )
 
 func main() {
@@ -92,7 +95,7 @@ func rootCmd() *cobra.Command {
 		"save default yaml config and exit",
 	)
 
-	root.AddCommand(runCmd(&config), checkCmd(&config), analyzeCmd(&config), generateRulesCmd(&config), daemonCmd(&config))
+	root.AddCommand(runCmd(&config), checkCmd(&config), getCmd(&config), analyzeCmd(&config), generateRulesCmd(&config), daemonCmd(&config))
 
 	return root
 }
@@ -125,6 +128,21 @@ func checkCmd(logConfig *cliConfig) *cobra.Command {
 	}
 
 	return check
+}
+
+func getCmd(logConfig *cliConfig) *cobra.Command {
+	get := &cobra.Command{
+		Use:           "get ID",
+		Short:         "Print detailed PMG spam quarantine content as JSON",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConfiguredGet(cmd.Context(), commandConfigPath(cmd, logConfig.ConfigPath), args[0], cmd.OutOrStdout())
+		},
+	}
+
+	return get
 }
 
 func analyzeCmd(logConfig *cliConfig) *cobra.Command {
@@ -275,6 +293,39 @@ func runConfiguredGenerate(
 	}
 
 	return runGenerate(ctx, fileConfig.DaemonConfig(), ruleConfig, output)
+}
+
+func runConfiguredGet(ctx context.Context, configPath string, id string, output io.Writer) error {
+	fileConfig, err := pmgbot.LoadFileConfig(configPath)
+	if err != nil {
+		return err
+	}
+	pmgcmd.SetSudo(fileConfig.Sudo)
+
+	if err := configureLogger(fileConfig.LogLevel, fileConfig.LogPath); err != nil {
+		return err
+	}
+
+	config := fileConfig.DaemonConfig()
+	if config.Timeout <= 0 {
+		return fmt.Errorf("daemon timeout must be greater than zero")
+	}
+
+	getCtx, cancel := context.WithTimeout(ctx, config.Timeout)
+	defer cancel()
+
+	content, err := runGet(getCtx, id)
+	if err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(content); err != nil {
+		return fmt.Errorf("write quarantine content json: %w", err)
+	}
+
+	return nil
 }
 
 func defaultFileConfig(_ time.Time) pmgbot.FileConfig {

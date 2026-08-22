@@ -1,7 +1,10 @@
 package pmg
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,5 +99,92 @@ func TestQuarantineSpamFromOutputReturnsError(t *testing.T) {
 	_, err := quarantineSpamFromOutput([]byte("200 OK"))
 	if err == nil {
 		t.Fatal("expected parse error")
+	}
+}
+
+func TestQuarantineContentFromOutput(t *testing.T) {
+	out := []byte(`200 OK
+{
+  "bytes": 34185,
+  "content": "body",
+  "envelope_sender": "sender@example.com",
+  "file": "cluster/1/spam/05/8852F06A89C7AACF305",
+  "from": "Sender <sender@example.com>",
+  "header": "Return-Path: sender@example.com\n",
+  "id": "C1R1691568T97183293",
+  "receiver": "user@example.com",
+  "spaminfo": [
+    {"desc": "Bayes spam probability is 0 to 1%", "name": "BAYES_00", "score": -1.9},
+    {"desc": "Headers contain an unresolved template", "name": "UNRESOLVED_TEMPLATE", "score": 1.252}
+  ],
+  "spamlevel": 5,
+  "subject": "[SPAM]: Test",
+  "time": 1787414437
+}
+200 OK`)
+
+	content, err := quarantineContentFromOutput(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.ID != "C1R1691568T97183293" {
+		t.Fatalf("got id %q", content.ID)
+	}
+	if content.File != "cluster/1/spam/05/8852F06A89C7AACF305" {
+		t.Fatalf("got file %q", content.File)
+	}
+	if content.Header != "Return-Path: sender@example.com\n" {
+		t.Fatalf("got header %q", content.Header)
+	}
+	if content.SpamLevel != 5 || content.Bytes != 34185 || content.Time != 1787414437 {
+		t.Fatalf("got content %#v", content)
+	}
+	if len(content.SpamInfo) != 2 {
+		t.Fatalf("got spaminfo %#v", content.SpamInfo)
+	}
+	if content.SpamInfo[0].Name != "BAYES_00" || content.SpamInfo[0].Score != -1.9 {
+		t.Fatalf("got spaminfo %#v", content.SpamInfo)
+	}
+	if content.Raw != "" {
+		t.Fatalf("parser must not fill raw, got %q", content.Raw)
+	}
+}
+
+func TestQuarantineRawFromFile(t *testing.T) {
+	root := t.TempDir()
+	file := "cluster/1/spam/05/8852F06A89C7AACF305"
+	path := filepath.Join(root, file)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("raw message"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := quarantineRawFromFile(root, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != "raw message" {
+		t.Fatalf("got raw %q", raw)
+	}
+}
+
+func TestQuarantineRawFromFileRejectsUnsafePath(t *testing.T) {
+	for _, file := range []string{"", "/tmp/message", "../message", "cluster/../../message"} {
+		_, err := quarantineRawFromFile(t.TempDir(), file)
+		if err == nil {
+			t.Fatalf("expected error for %q", file)
+		}
+	}
+}
+
+func TestQuarantineContentFromOutputReturnsError(t *testing.T) {
+	_, err := quarantineContentFromOutput([]byte("200 OK"))
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("got error %q", err)
 	}
 }

@@ -38,6 +38,14 @@ Check what would be delivered or deleted without applying actions:
 pmgbot check --config pmgbot.yaml
 ```
 
+Print detailed quarantine content by message ID as JSON:
+
+```bash
+pmgbot get --config pmgbot.yaml C1R1691568T97183293
+```
+
+The output includes PMG `/quarantine/content` fields plus `raw`, read from `/var/spool/pmg/<file>`. The `raw` field is printed last.
+
 Analyze current PMG spam subjects, envelope senders, and From headers:
 
 ```bash
@@ -76,15 +84,16 @@ Output format:
 
 ```text
 subject - count - script - lang
-envelope_sender - from - count - action
+envelope_sender - from - id - count - action
 ---
 next subject - count - script - lang
-next envelope_sender - next from - count - action
+next envelope_sender - next from - next id - count - action
 ---
 summary - total: 10 - deliver: 2 - delete: 3 - remain: 5
 ```
 
 Sender action is `skip` when no rule matches, or `[delete:RULE_NAME]` / `[deliver:RULE_NAME]` when a rule matches.
+When a sender row aggregates multiple messages, IDs are comma-separated. If a loaded JSON dump has no message IDs, the ID column is `-`.
 The summary is calculated across all loaded spam messages, not only subjects shown after `--min-count` filtering.
 
 Run continuously as a daemon:

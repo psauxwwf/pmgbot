@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"pmgbot/internal/pmgbot"
+	"pmgbot/pkg/pmg"
 )
 
 func TestRootCommandsAndFlags(t *testing.T) {
@@ -24,7 +25,7 @@ func TestRootCommandsAndFlags(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"run", "check", "analyze", "generate", "daemon"} {
+	for _, name := range []string{"run", "check", "get", "analyze", "generate", "daemon"} {
 		cmd, _, err := root.Find([]string{name})
 		if err != nil {
 			t.Fatal(err)
@@ -57,7 +58,7 @@ func TestRootCommandsAndFlags(t *testing.T) {
 	if root.Flags().Lookup("save-config") == nil {
 		t.Fatal("save-config root flag not found")
 	}
-	for _, name := range []string{"run", "check", "analyze", "generate", "daemon"} {
+	for _, name := range []string{"run", "check", "get", "analyze", "generate", "daemon"} {
 		cmd, _, err := root.Find([]string{name})
 		if err != nil {
 			t.Fatal(err)
@@ -165,6 +166,66 @@ func TestRootWithoutSubcommandDoesNotRunOneCycle(t *testing.T) {
 	root.SetErr(io.Discard)
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGetCommandPrintsQuarantineContentJSON(t *testing.T) {
+	originalRunGet := runGet
+	t.Cleanup(func() { runGet = originalRunGet })
+
+	var called bool
+	runGet = func(_ context.Context, id string) (pmg.SpamContent, error) {
+		called = true
+		if id != "C1R1691568T97183293" {
+			t.Fatalf("got id %q", id)
+		}
+
+		return pmg.SpamContent{
+			Bytes:          34185,
+			Content:        "content",
+			EnvelopeSender: "sender@example.com",
+			File:           "cluster/1/spam/05/message",
+			From:           "Sender <sender@example.com>",
+			Header:         "Return-Path: sender@example.com\n",
+			ID:             id,
+			Receiver:       "receiver@example.com",
+			SpamInfo:       []pmg.SpamInfo{{Name: "BAYES_00", Desc: "Bayes", Score: -1.9}},
+			SpamLevel:      5,
+			Subject:        "[SPAM]: Test",
+			Time:           1787414437,
+			Raw:            "raw message",
+		}, nil
+	}
+
+	configPath := filepath.Join(t.TempDir(), "pmgbot.yaml")
+	if err := pmgbot.SaveFileConfig(configPath, defaultFileConfig(time.Now())); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--config", configPath, "get", "C1R1691568T97183293"})
+	root.SetOut(&out)
+	root.SetErr(io.Discard)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected get command to load quarantine content")
+	}
+
+	got := out.String()
+	for _, want := range []string{
+		`"id": "C1R1691568T97183293"`,
+		`"spaminfo": [`,
+		`"raw": "raw message"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output %q does not contain %q", got, want)
+		}
+	}
+	if strings.LastIndex(got, `"raw"`) < strings.LastIndex(got, `"time"`) {
+		t.Fatalf("raw must be after time in output %q", got)
 	}
 }
 

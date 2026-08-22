@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"pmgbot/pkg/lang"
 )
@@ -20,6 +21,7 @@ type spamAnalysisRow struct {
 type spamAnalysisSenderRow struct {
 	EnvelopeSender string
 	From           string
+	IDs            []string
 	Count          int
 	Action         string
 }
@@ -83,7 +85,7 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow, summary spamAna
 			return fmt.Errorf("write spam analysis: %w", err)
 		}
 		for _, sender := range row.Senders {
-			if _, err := fmt.Fprintf(output, "%s - %s - %d - %s\n", sender.EnvelopeSender, sender.From, sender.Count, sender.Action); err != nil {
+			if _, err := fmt.Fprintf(output, "%s - %s - %s - %d - %s\n", sender.EnvelopeSender, sender.From, sender.IDText(), sender.Count, sender.Action); err != nil {
 				return fmt.Errorf("write spam analysis: %w", err)
 			}
 		}
@@ -103,6 +105,14 @@ func writeSpamAnalysis(output io.Writer, rows []spamAnalysisRow, summary spamAna
 	}
 
 	return nil
+}
+
+func (row spamAnalysisSenderRow) IDText() string {
+	if len(row.IDs) == 0 {
+		return "-"
+	}
+
+	return strings.Join(row.IDs, ",")
 }
 
 func analyzeSpamSummary(messages []quarantineSpamMessage, rules []compiledRule) spamAnalysisSummary {
@@ -132,17 +142,25 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules [
 		minCount = 1
 	}
 
-	countsBySubject := make(map[string]map[spamAnalysisSenderKey]int)
+	countsBySubject := make(map[string]map[spamAnalysisSenderKey]spamAnalysisSenderRow)
 	for _, message := range messages {
 		if countsBySubject[message.Subject] == nil {
-			countsBySubject[message.Subject] = make(map[spamAnalysisSenderKey]int)
+			countsBySubject[message.Subject] = make(map[spamAnalysisSenderKey]spamAnalysisSenderRow)
 		}
 		key := spamAnalysisSenderKey{
 			EnvelopeSender: message.EnvelopeSender,
 			From:           message.From,
 			Action:         spamAnalysisMessageAction(message, messages, rules),
 		}
-		countsBySubject[message.Subject][key]++
+		sender := countsBySubject[message.Subject][key]
+		sender.EnvelopeSender = key.EnvelopeSender
+		sender.From = key.From
+		sender.Action = key.Action
+		sender.Count++
+		if id := strings.TrimSpace(message.ID); id != "" {
+			sender.IDs = append(sender.IDs, id)
+		}
+		countsBySubject[message.Subject][key] = sender
 	}
 
 	rows := make([]spamAnalysisRow, 0, len(countsBySubject))
@@ -152,14 +170,9 @@ func analyzeSpamMessages(messages []quarantineSpamMessage, minCount int, rules [
 			Script:   lang.SubjectScript(subject),
 			Language: lang.SubjectLanguage(subject),
 		}
-		for sender, count := range senderCounts {
-			row.Count += count
-			row.Senders = append(row.Senders, spamAnalysisSenderRow{
-				EnvelopeSender: sender.EnvelopeSender,
-				From:           sender.From,
-				Count:          count,
-				Action:         sender.Action,
-			})
+		for _, sender := range senderCounts {
+			row.Count += sender.Count
+			row.Senders = append(row.Senders, sender)
 		}
 		if row.Count < minCount {
 			continue
